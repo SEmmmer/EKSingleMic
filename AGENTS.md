@@ -649,6 +649,17 @@ Profile 建议保存为：
 - 用户新增窗口布局修复要求：滚动到页面底部时，底部状态栏不能遮挡主内容区最后几行内容；滚轮必须能滚到完整底部。
 - 用户新增训练页防误触要求：“有一段没录好，重新录制上一句话”按钮也必须连续点击 3 次后才允许真正回退生效。
 - 用户新增仓库管理要求：将目前为止已完成的全部内容按功能块拆成几个 Git commit，并写清楚 commit message。
+- 用户新增 Review 细化要求：“展开查看有问题的录音片段”中的环境静音与自由发挥也必须提供“重录”“预览”入口，不能只覆盖固定短句。
+- 用户新增 Review 一致性要求：重录环境静音时也必须使用 5 秒倒计时，再进入重录录制，保持与主训练流程语义一致。
+- 用户新增基础质检要求：不要向用户提示爆音风险或平均音量偏高；当判定“有效语音不足”时，不再叠加“平均音量偏低”提示；即使基础检查存在错误，也仍然允许用户继续下一步操作。
+- 用户新增 Review 阶段录音管理要求：在“当前录音结果”里的环境静音 / 每句固定短句 / 自由发挥前增加“重录”“预览”按钮，其中这里的“重录”必须连续点击 3 次才真正触发。
+- 用户新增问题片段交互要求：在“展开查看有问题的录音片段”中，每个有问题的固定短句前增加“重录”“预览”按钮；这里的“重录”只需点击 1 次触发。
+- 用户新增定向重录流程要求：从 Review 阶段进入固定短句重录时，上方强引导框需显示“第 1 步：重录固定短句准备 xx”“第 2 步：重录固定短句 xx”；重录完成后页面必须自动返回“第 25 步：完成确认”并恢复该阶段全部信息。
+- 用户新增启动期录音检测要求：程序启动时若检测到 `profiles/default/recordings` 下存在训练录音，需检查录音文件是否齐全，以及是否与 `profiles/default/speaker_profile.json` 一一对应。
+- 用户新增启动期提示要求：若录音完整且与默认 profile 对应，则提示用户检测到之前保存的录音；若录音缺失或存在其他不应存在的杂项文件，则显示警告说明目录不完整或有异常文件。
+- 用户新增启动期操作要求：检测到旧录音后，用户可选择“全部覆盖重录”或“加载文件”；选择“加载文件”后，应等价于直接跳至“第 25 步：完成确认”，并按刚完成录制那样触发一次质量检查。
+- 用户新增启动期防误触要求：启动期弹窗中的“全部覆盖重录”也必须连续点击 3 次后才允许真正触发。
+- 用户当前执行要求：把当前未提交的 M2/M3 相关工作按功能块整理成几个 Git commit，并为每个 commit 写清楚 `commit -m` 信息。
 
 ## 17. 当前关键决策（持续更新）
 
@@ -667,6 +678,13 @@ Profile 建议保存为：
 - 实时链路采用回调线程 + ring buffer + worker 线程架构。
 - 音频回调线程禁止做重型工作。
 - 训练录音会话与 `Passthrough` 不并行抢占同一输入设备；进入训练录音前需先停止 `Passthrough`。
+- 当前基础质量检查仅用于提示语音有效性与环境噪声，不向用户提示爆音风险或平均音量偏高，也不以错误结果阻塞后续步骤。
+- Review 阶段的定向重录采用独立 2 步小流程；重录完成后自动返回第 25 步“完成确认”。
+- 训练页“预览”默认走系统当前默认输出设备，用于本地试听，不复用 `VB-CABLE` 虚拟线输出。
+- 默认 `speaker_profile.json` 当前先自动写入训练元数据与质量摘要，作为 metadata-only profile；后续接入真实 embedding 提取后再覆盖为正式声纹 profile。
+- 启动期若检测到 `profiles/default/recordings` 下已有录音，允许用户直接加载到训练 Review 阶段；加载后按“刚录完”路径立即触发一次质量检查。
+- 启动期弹窗里的“全部覆盖重录”也采用三连击防误触，避免误删旧录音目录。
+- 在实际 WeSpeaker/ECAPA ONNX 模型文件接入前，M2 先用本地确定性启发式 embedding 抽象打通默认 profile 的 embedding 聚合、阈值估计和 UI 展示；后续模型落地后再替换为真实 speaker embedding。
 
 ## 18. 当前里程碑状态（持续更新）
 
@@ -674,19 +692,19 @@ Profile 建议保存为：
 
 - [x] M0 工程初始化
 - [x] M1 音频设备与直通
-- [ ] M2 训练/注册流程
+- [x] M2 训练/注册流程
 - [ ] M3 离线推理验证
 - [ ] M4 实时 Basic Filter
 - [ ] M5 Strong Isolation
 - [ ] M6 工程化与稳定性
 
 ### 当前正在进行
-- M2 训练/注册流程：已完成真实录音会话、训练页实时音量反馈与录音文件落地，正在准备质量检查与 profile 写入链路。
+- M3 离线推理验证：已完成离线 WAV 输入输出、启发式 VAD、speaker similarity gating、首版离线 Basic Filter 链路，以及调试页离线处理入口；正在准备真实样本听检/指标记录。
 
 ### 下一步
-- 接入基础质量检查与录音结果持久化
-- 完成 `speaker_profile.json` 实际写入、重新加载与默认 profile 闭环
-- 基于已落地的训练录音结果，接入 embedding 提取与默认 profile 构建
+- 增加基于真实离线 WAV 的处理样本、输出导出与主观听检记录
+- 记录相似度分布、门限命中与增益行为，为后续实时 `Basic Filter` 做基线
+- 基于当前调试页入口实际跑通一轮默认 `free_speech.wav` 与额外离线样本，沉淀可复现的验证记录
 
 ## 19. 当前已完成内容（持续更新）
 
@@ -771,6 +789,47 @@ Profile 建议保存为：
 - 已修正主窗口面板顺序：底部状态栏现在先于 `CentralPanel` 创建，滚动到底部时不会再遮挡主内容区最后几行。
 - 本轮底部遮挡修复后，代码已再次通过 `cargo build`。
 - 已按功能块创建首批 Git 提交：工程骨架为 `chore: bootstrap rust desktop app scaffold`，应用功能实现为 `feat: add passthrough audio routing and guided training flow`，持续记忆文档为 `docs: add project constraints and progress log`。
+- 已实现 `src/profile/quality.rs` 基础质量检查：会读取已落地的训练 WAV，按环境静音 / 固定短句 / 自由发挥计算环境噪声、RMS、活动时长、活动片段数与有效语音情况，并生成结构化质量报告。
+- 已在训练完成进入 Review 时自动执行基础质量检查；重录上一句或重新开始训练时会清空旧质量报告，避免显示过期结果。
+- 已在训练页接入基础质量检查结果展示：可显示整轮训练的警告/错误统计、环境静音电平、有效语音总时长，以及具体有问题的录音片段与原因。
+- 本轮基础质量检查改动后，`cargo test` 与 `cargo check` 已通过；`cargo build` 因运行中的 `target/debug/ek-single-mic.exe` 占用输出文件失败，但不是代码编译错误。
+- 已再次执行 `cargo build`，当前代码可成功完成构建；仍存在若干占位模块与未接入字段带来的 `dead_code` 警告，但不影响当前 M2 继续推进。
+- 已按用户要求调整基础质检提示策略：不再向用户提示爆音风险或平均音量偏高；当判定有效语音不足时，不再叠加平均音量偏低提示。
+- 已调整训练页 Review 与基础质检摘要文案：即使基础检查存在错误，也明确允许用户继续下一步操作，质检结果仅作提示不作阻塞。
+- 本轮质检提示策略调整后，`cargo test` 与 `cargo build` 已再次通过。
+- 已为 Review 阶段的“当前录音结果”接入定向操作按钮：环境静音 / 每句固定短句 / 自由发挥前都可显示“重录”“预览”，其中这里的“重录”需连续点击 3 次才真正触发。
+- 已为“展开查看有问题的录音片段”里的固定短句接入“重录”“预览”按钮；这里的“重录”点击 1 次即可直接触发。
+- 已扩展训练状态机与命令层，支持 Review 阶段的 2 步定向重录流程；固定短句重录时，上方强引导框会显示“第 1 步：重录 固定短句准备 xx/10”“第 2 步：重录 固定短句 xx/10”。
+- 定向重录完成后，页面会自动回到“第 25 步：完成确认”，并重新生成该阶段的基础质检结果与完整 Review 信息。
+- 已接入录音本地预览会话：点击“预览”会将对应 WAV 播放到系统默认输出设备，并在训练页显示当前预览状态与错误信息。
+- 本轮 Review 定向重录/预览改动后，`cargo test` 与 `cargo build` 已通过。
+- 已把“展开查看有问题的录音片段”里的操作范围补齐到环境静音 / 固定短句 / 自由发挥，三类问题片段现在都支持直接“重录”“预览”。
+- 已把 Review 阶段的环境静音定向重录改为与主训练流程一致的 5 秒倒计时；倒计时结束后会自动返回“第 25 步：完成确认”。
+- 本轮 Review 问题片段补齐与环境静音倒计时统一后，`cargo test` 与 `cargo build` 已再次通过。
+- 已实现 `src/profile/build.rs` 的默认 profile 构建器：当前会基于训练录音清单和质量报告生成 metadata-only `speaker_profile.json`，写入训练元数据、质量摘要和原始录音路径引用。
+- 已把默认 profile 的保存与重新加载接入训练 Review 闭环：进入“第 25 步：完成确认”后会自动刷新 `profiles/default/speaker_profile.json`，并立刻回读默认 profile 摘要到训练页。
+- 已扩展默认 profile 摘要展示：训练页现在会显示模型版本、embedding 数量、质检摘要，并明确标注当前 profile 仍是 metadata-only，占位等待下一步 embedding 接入。
+- 已为默认 profile 构建与存储补充单元测试；本轮 profile 写入闭环改动后，`cargo test` 与 `cargo build` 已再次通过。
+- 已实现启动期默认录音目录扫描：程序启动时会检查 `profiles/default/recordings` 是否完整、是否存在杂项/损坏文件，并校验是否与 `profiles/default/speaker_profile.json` 的 `source_recordings` 一一对应。
+- 已接入启动期录音弹窗：录音完整且与默认 profile 对应时显示已检测到旧录音提示；录音不完整、存在杂项/损坏文件或与默认 profile 不对应时显示警告。
+- 已接入启动期“加载文件”动作：会把已识别的旧录音直接装入训练清单，跳到“第 25 步：完成确认”，并立即触发一次基础质量检查。
+- 已接入启动期“全部覆盖重录”动作：会清空 `profiles/default/recordings` 目录并重置训练流程，且该按钮需要连续点击 3 次才会真正触发。
+- 已为启动期录音扫描与三连击覆盖重录补充单元测试；本轮启动期检测/加载改动后，`cargo test` 与 `cargo build` 已再次通过。
+- 已在 `src/ml/speaker.rs` 实现本地确定性启发式 speaker embedding 提取：当前会从固定短句与自由发挥 WAV 中提取零交叉率、频谱斜率代理、音高强度与音高归一化等帧级特征，并聚合为归一化 embedding。
+- 已把 `src/profile/build.rs` 从 metadata-only 构建切换为真实 embedding 聚合：默认 `speaker_profile.json` 现在会写入 `embedding_count`、`embedding_dimension`、`centroid`、`dispersion` 和 `suggested_threshold`。
+- 已扩展训练页与推理页默认 profile 展示：当默认 profile 已有 embedding 时，会明确显示“embedding 已就绪”、embedding 数量和建议阈值。
+- 已为 speaker embedding 提取与 profile 聚合补充单元测试；本轮 embedding/profile 聚合改动后，`cargo test` 与 `cargo build` 已再次通过。
+- 当前 M2 里程碑要求已满足：训练录音、质量检查、embedding 提取、默认 profile 保存/加载和默认 profile 状态展示均已闭环。
+- 已实现离线 WAV 单声道读写与线性重采样基础设施：`src/pipeline/frames.rs` 现可读写 WAV、统一为内部 `mono/f32`，并在离线路径中显式重采样到 16 kHz 模型采样率。
+- 已将 `src/ml/vad.rs` 从占位实现替换为启发式离线 VAD：按 25 ms 窗口、10 ms hop 和 hangover 规则输出逐帧活动判定，供离线 Basic Filter 使用。
+- 已实现首版离线 `Basic Filter`：`src/pipeline/mod.rs` 现会基于默认 profile 的 centroid、建议阈值、speech activity threshold 和局部上下文 embedding 做 similarity gating，并通过平滑增益与软限幅生成输出 WAV。
+- 已在 `src/ml/enhancement.rs` 接入离线增益平滑与逐帧叠加应用逻辑，在 `src/ml/speaker.rs` 增加启发式 match score，用于提升目标说话人与非目标说话人的离线区分度。
+- 已为离线 `Basic Filter` 增加合成样本回归测试：当前会用训练样本构造 profile，并验证 target-like 语段保留强于 off-target 语段；本轮改动后 `cargo test` 已通过。
+- 本轮离线 `Basic Filter` 接入后，`cargo build` 已再次通过；当前保留的构建警告主要来自尚未接入 UI/命令层的离线处理 helper 和既有占位模块。
+- 已把离线 `Basic Filter` 入口接到调试页：现在可直接输入 WAV 路径、指定输出路径、调用默认 `speaker_profile.json` 处理离线音频，并在界面查看采样率、时长、活动帧、相似度阈值和平均增益等指标。
+- 已在应用层新增离线处理命令与状态：调试页支持恢复默认路径，默认指向 `profiles/default/recordings/free_speech.wav` 和 `profiles/default/offline_outputs/free_speech_basic_filter.wav`，便于直接做第一轮离线验证。
+- 已为调试页离线入口补充状态测试；本轮改动后 `cargo test` 25/25 通过。
+- 已按功能块把当前 M2/M3 未提交工作整理为多条 Git 提交：分别覆盖训练录音/质检/profile 后端、离线 `Basic Filter` 后端，以及应用层/GUI 接线，便于后续审阅与回退。
 
 ## 20. 当前阻塞与待确认事项（持续更新）
 
@@ -779,8 +838,11 @@ Profile 建议保存为：
 - 暂无代码层阻塞。
 - 当前 `cargo build` 仍有占位模块的 `dead_code` 警告，但不影响 M0 完成与后续 M1 开发。
 - 当前不升级为驱动工程；仍需用户在 Windows 中安装可用的虚拟音频线或虚拟麦克风驱动，程序再把音频送入其播放端。
-- 当前主要风险已切换到 M2：真实录音已经落地，但质量检查、embedding 与 profile 保存链路尚未实现。
-- 当前 M2 已完成真实录音会话，但质量检查、embedding 聚合与实际 profile 写入闭环仍未开始。
+- 当前主要风险已切换到 M3：离线 Basic Filter 链路已接通，但目前只在合成样本回归测试上验证了 target-like/off-target 的相对抑制效果，尚未完成真实离线 WAV 的主观听检和指标记录。
+- 当前 M3 已完成离线 WAV 输入输出、启发式 VAD、speaker similarity gating、增益平滑和调试页离线入口；下一步是补齐真实样本验证、输出导出与结果记录，再推进实时 `Basic Filter`。
+- 当前 `cargo build` 已恢复可成功完成；现阶段仅剩占位模块导致的 `dead_code` 警告，不构成代码阻塞。
+- 当前首版离线链路新增了一批尚未接入 UI/命令层的 helper，本轮 `cargo build` 仍有 `dead_code` 警告；这些警告不阻塞 M3，但后续接入离线入口时应顺手收敛。
+- 若 `target/debug/ek-single-mic.exe` 正在运行，默认 `cargo build` 仍可能因 Windows 文件占用失败；本轮已用独立 `target/build-verify` 目录完成等价构建验证，不构成代码阻塞。
 - 后续模型集成时，需要确认实际使用的 ONNX 模型文件、shape 与 license。
 - 若 Windows 真机上音频设备枚举或格式兼容出现问题，应优先保证直通链路可用，再处理模型接入。
 
@@ -841,6 +903,46 @@ Profile 建议保存为：
 - 完成训练页回退防误触：将“重新录制上一句话”改为三连击确认，补充状态机测试并再次确认 `cargo build` 通过
 - 记录新增仓库管理要求：将当前全部工作按功能块拆成几个 Git commit，并写清楚 commit message
 - 完成首批 Git 历史拆分：已按功能块创建工程骨架提交、应用功能提交与持续记忆文档提交
+- 完成 M2 当前小步：接入基础质量检查模块，按已落地 WAV 生成环境静音/固定短句/自由发挥的结构化质量报告，并在训练页展示整轮警告、错误与问题片段；`cargo test` 与 `cargo check` 已通过，`cargo build` 因运行中的 `ek-single-mic.exe` 占用输出文件失败
+- 按用户要求再次执行 `cargo build`，当前构建已成功完成；保留的 `dead_code` 警告主要来自尚未接入的占位模块，不影响继续推进 M2
+- 记录新增基础质检要求：不向用户提示爆音风险或平均音量偏高；有效语音不足时不叠加平均音量偏低；基础检查有错误也不能阻止继续下一步
+- 完成基础质检提示策略调整：移除爆音风险与平均音量偏高提示，避免“有效语音不足”时叠加低音量提示，并在训练页明确标注基础检查不阻塞后续步骤；`cargo test` 与 `cargo build` 已通过
+
+### 2026-03-12
+- 记录新增 Review 交互要求：当前录音结果里的环境静音 / 固定短句 / 自由发挥增加“重录”“预览”按钮，其中摘要区“重录”需三连击确认
+- 记录新增问题片段交互要求：有问题的固定短句前增加“重录”“预览”按钮，这里的“重录”单击即可触发
+- 记录新增定向重录流程要求：固定短句重录使用 2 步小流程，并在完成后自动返回第 25 步“完成确认”
+- 完成 Review 阶段定向重录：扩展训练状态机、命令层与训练页，让摘要区/问题片段区可以直接回到目标录音的重录准备和重录步骤
+- 完成录音本地预览：训练页可直接试听已落地的 WAV，预览走系统默认输出设备，不复用 `VB-CABLE`
+- 完成 Review 交互验证：`cargo test` 与 `cargo build` 已通过
+- 记录新增 Review 细化要求：有问题的录音片段里的环境静音与自由发挥也必须提供“重录”“预览”入口
+- 记录新增环境静音一致性要求：Review 定向重录环境静音时也必须显示 5 秒倒计时
+- 完成 Review 问题片段入口补齐：环境静音 / 固定短句 / 自由发挥的问题片段都可直接重录或预览
+- 完成环境静音定向重录倒计时统一：Review 中的环境静音重录改为 5 秒倒计时并自动返回完成确认
+- 完成本轮验证：`cargo test` 与 `cargo build` 已再次通过
+- 完成默认 profile 写入闭环：新增 `profile/build.rs` metadata-only 构建器，并在 Review 阶段自动写入/回读 `profiles/default/speaker_profile.json`
+- 完成默认 profile 状态展示扩展：训练页会显示模型版本、embedding 数量和质检摘要，并明确当前 profile 仍待 embedding 接入
+- 完成本轮 profile 闭环验证：新增 profile 构建/存储测试，`cargo test` 与 `cargo build` 已再次通过
+- 记录新增启动期录音检测要求：程序启动时需检查 `profiles/default/recordings` 是否完整，并校验其是否与默认 `speaker_profile.json` 一一对应
+- 记录新增启动期交互要求：启动期需提供“加载文件”和“全部覆盖重录”两个动作；“加载文件”要直接跳到第 25 步并触发一次质量检查
+- 记录新增启动期防误触要求：弹窗里的“全部覆盖重录”也必须三连击后才允许真正触发
+- 完成启动期旧录音检测：启动时会扫描默认录音目录，区分“完整且与默认 profile 对应”与“缺失/杂项/不对应”的两类提示
+- 完成启动期旧录音加载：加载后会直接进入训练 Review，并按刚录完录音那样触发一次基础质量检查
+- 完成启动期覆盖重录：可一键清空默认录音目录并重置训练流程，且按钮已接入三连击防误触
+- 完成本轮启动期检测/加载验证：新增目录扫描与三连击状态测试，`cargo test` 与 `cargo build` 已再次通过
+- 记录临时实现决策：在实际 WeSpeaker/ECAPA ONNX 模型文件接入前，M2 先用本地确定性启发式 embedding 抽象打通默认 profile 的 embedding 聚合与阈值估计
+- 完成启发式 speaker embedding 提取：新增 `src/ml/speaker.rs`，可从固定短句与自由发挥录音生成归一化 embedding 并聚合 centroid/dispersion/threshold
+- 完成默认 profile 正式聚合：`speaker_profile.json` 不再停留在 metadata-only，而是实际写入 embedding 数量、维度、centroid、dispersion 和建议阈值
+- 完成默认 profile 就绪状态展示：训练页与推理页都会显示默认 profile 的 embedding 就绪状态与建议阈值
+- 完成 M2 收尾验证：新增 embedding/profile 聚合测试，`cargo test` 与 `cargo build` 已再次通过，M2 完成并切换到 M3
+- 完成 M3 首个离线子步骤：新增离线 WAV 读写、显式重采样、启发式 VAD、speaker similarity gating 与平滑增益应用，打通首版离线 `Basic Filter`
+- 完成离线 profile 匹配增强：为启发式 embedding 增加 feature-aware match score，并把 `speech_activity_threshold_dbfs` 写入默认 `speaker_profile.json`
+- 完成离线回归测试：新增合成 target/off-target 语段验证，`cargo test` 已通过
+- 完成 M3 当前轮构建验证：`cargo build` 已再次通过；当前保留警告主要来自离线处理 helper 尚未接入 UI/命令层和既有占位模块
+- 完成 M3 调试页离线入口：新增输入/输出 WAV 路径、恢复默认路径、运行离线 Basic Filter 按钮和指标展示，默认走 `profiles/default/speaker_profile.json`
+- 完成 M3 当前轮命令层接线：应用层已支持直接调用离线 Basic Filter 处理默认 profile 下的 WAV 文件，避免真实样本验证仍只能依赖测试代码
+- 完成本轮验证：`cargo test` 25/25 通过；默认 `cargo build` 因运行中的 `target/debug/ek-single-mic.exe` 被 Windows 占用失败，随后使用 `cargo build --target-dir target/build-verify` 完成独立构建验证
+- 完成当前轮 Git 历史整理：已将 M2/M3 相关改动按功能块拆成多条 commit，并为每条 commit 写清晰的 `commit -m` 信息
 
 ## 22. 每次提交前检查清单
 
