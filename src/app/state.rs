@@ -1,0 +1,399 @@
+use std::time::Instant;
+
+use crate::{
+    app::commands::AppCommand,
+    audio::devices::DeviceInventory,
+    config::settings::AppSettings,
+    pipeline::realtime::{RuntimeFormatSummary, RuntimeMetricsSnapshot, RuntimeStage},
+    profile::record::{EnrollmentScript, RecordingTakeKind, TrainingRecordingManifest},
+    profile::storage::ProfileSummary,
+};
+
+pub const RESTART_TRAINING_CONFIRMATION_CLICKS: u8 = 3;
+pub const RETRY_PREVIOUS_PROMPT_CONFIRMATION_CLICKS: u8 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrainingStep {
+    Preparation,
+    AmbientSilence,
+    FixedPromptPreparation { index: usize },
+    FixedPrompt { index: usize },
+    FreeSpeechPreparation,
+    FreeSpeech,
+    Review,
+}
+
+impl Default for TrainingStep {
+    fn default() -> Self {
+        Self::Preparation
+    }
+}
+
+impl TrainingStep {
+    pub fn total_steps(prompt_count: usize) -> usize {
+        prompt_count * 2 + 5
+    }
+
+    pub fn position(self, prompt_count: usize) -> usize {
+        match self {
+            Self::Preparation => 1,
+            Self::AmbientSilence => 2,
+            Self::FixedPromptPreparation { index } => index * 2 + 3,
+            Self::FixedPrompt { index } => index * 2 + 4,
+            Self::FreeSpeechPreparation => prompt_count * 2 + 3,
+            Self::FreeSpeech => prompt_count * 2 + 4,
+            Self::Review => prompt_count * 2 + 5,
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Preparation => "训练准备",
+            Self::AmbientSilence => "环境静音",
+            Self::FixedPromptPreparation { .. } => "固定短句准备",
+            Self::FixedPrompt { .. } => "固定短句",
+            Self::FreeSpeechPreparation => "自由发挥准备",
+            Self::FreeSpeech => "自由发挥",
+            Self::Review => "完成确认",
+        }
+    }
+
+    pub fn advance(self, prompt_count: usize) -> Self {
+        match self {
+            Self::Preparation => Self::AmbientSilence,
+            Self::AmbientSilence => Self::FixedPromptPreparation { index: 0 },
+            Self::FixedPromptPreparation { index } => Self::FixedPrompt { index },
+            Self::FixedPrompt { index } if index + 1 < prompt_count => {
+                Self::FixedPromptPreparation { index: index + 1 }
+            }
+            Self::FixedPrompt { .. } => Self::FreeSpeechPreparation,
+            Self::FreeSpeechPreparation => Self::FreeSpeech,
+            Self::FreeSpeech => Self::Review,
+            Self::Review => Self::Review,
+        }
+    }
+
+    pub fn retry_previous_prompt(self, prompt_count: usize) -> Option<Self> {
+        match self {
+            Self::FixedPromptPreparation { index } | Self::FixedPrompt { index } if index > 0 => {
+                Some(Self::FixedPromptPreparation { index: index - 1 })
+            }
+            Self::FreeSpeechPreparation | Self::FreeSpeech if prompt_count > 0 => {
+                Some(Self::FixedPromptPreparation {
+                    index: prompt_count - 1,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    pub fn recording_take_kind(self) -> Option<RecordingTakeKind> {
+        match self {
+            Self::AmbientSilence => Some(RecordingTakeKind::AmbientSilence),
+            Self::FixedPrompt { index } => Some(RecordingTakeKind::FixedPrompt { index }),
+            Self::FreeSpeech => Some(RecordingTakeKind::FreeSpeech),
+            _ => None,
+        }
+    }
+
+    pub fn is_recording_phase(self) -> bool {
+        self.recording_take_kind().is_some()
+    }
+}
+
+#[derive(Debug)]
+pub struct AppState {
+    pub settings: AppSettings,
+    pub config_path: String,
+    pub device_inventory: DeviceInventory,
+    pub last_device_error: Option<String>,
+    pub last_persist_error: Option<String>,
+    pub runtime_stage: RuntimeStage,
+    pub runtime_metrics: RuntimeMetricsSnapshot,
+    pub runtime_format: Option<RuntimeFormatSummary>,
+    pub last_runtime_error: Option<String>,
+    pub enrollment_script: EnrollmentScript,
+    pub training_step: TrainingStep,
+    pub training_step_started_at: Instant,
+    pub restart_training_confirmation_clicks: u8,
+    pub retry_previous_prompt_confirmation_clicks: u8,
+    pub training_recordings: TrainingRecordingManifest,
+    pub training_recording_active: bool,
+    pub training_input_level_linear: f32,
+    pub last_training_recording_error: Option<String>,
+    pub default_profile_summary: Option<ProfileSummary>,
+    pub last_profile_error: Option<String>,
+    pub pending_command: Option<AppCommand>,
+}
+
+impl AppState {
+    pub fn new(
+        settings: AppSettings,
+        config_path: String,
+        device_inventory: DeviceInventory,
+        last_device_error: Option<String>,
+        enrollment_script: EnrollmentScript,
+        default_profile_summary: Option<ProfileSummary>,
+        last_profile_error: Option<String>,
+    ) -> Self {
+        let prompt_count = enrollment_script.prompts.len();
+
+        Self {
+            settings,
+            config_path,
+            device_inventory,
+            last_device_error,
+            last_persist_error: None,
+            runtime_stage: RuntimeStage::Stopped,
+            runtime_metrics: RuntimeMetricsSnapshot::default(),
+            runtime_format: None,
+            last_runtime_error: None,
+            enrollment_script,
+            training_step: TrainingStep::Preparation,
+            training_step_started_at: Instant::now(),
+            restart_training_confirmation_clicks: 0,
+            retry_previous_prompt_confirmation_clicks: 0,
+            training_recordings: TrainingRecordingManifest::new(prompt_count),
+            training_recording_active: false,
+            training_input_level_linear: 0.0,
+            last_training_recording_error: None,
+            default_profile_summary,
+            last_profile_error,
+            pending_command: None,
+        }
+    }
+
+    pub fn queue_command(&mut self, command: AppCommand) {
+        self.pending_command = Some(command);
+    }
+
+    pub fn advance_training_step(&mut self) {
+        self.reset_training_confirmation_clicks();
+        self.training_step = self.training_step.advance(self.enrollment_script.prompts.len());
+        self.training_step_started_at = Instant::now();
+    }
+
+    pub fn restart_training_flow(&mut self) {
+        self.reset_training_confirmation_clicks();
+        self.training_step = TrainingStep::Preparation;
+        self.training_step_started_at = Instant::now();
+    }
+
+    pub fn confirm_restart_training(&mut self) -> bool {
+        if !matches!(self.training_step, TrainingStep::Review) {
+            self.reset_restart_training_confirmation();
+            return false;
+        }
+
+        self.restart_training_confirmation_clicks = self
+            .restart_training_confirmation_clicks
+            .saturating_add(1)
+            .min(RESTART_TRAINING_CONFIRMATION_CLICKS);
+
+        if self.restart_training_confirmation_clicks >= RESTART_TRAINING_CONFIRMATION_CLICKS {
+            self.reset_restart_training_confirmation();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn can_retry_previous_prompt(&self) -> bool {
+        self.training_step
+            .retry_previous_prompt(self.enrollment_script.prompts.len())
+            .is_some()
+    }
+
+    pub fn confirm_retry_previous_prompt(&mut self) -> bool {
+        if !self.can_retry_previous_prompt() {
+            self.reset_retry_previous_prompt_confirmation();
+            return false;
+        }
+
+        self.retry_previous_prompt_confirmation_clicks = self
+            .retry_previous_prompt_confirmation_clicks
+            .saturating_add(1)
+            .min(RETRY_PREVIOUS_PROMPT_CONFIRMATION_CLICKS);
+
+        if self.retry_previous_prompt_confirmation_clicks
+            >= RETRY_PREVIOUS_PROMPT_CONFIRMATION_CLICKS
+        {
+            self.reset_retry_previous_prompt_confirmation();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn retry_previous_prompt(&mut self) {
+        if let Some(step) = self
+            .training_step
+            .retry_previous_prompt(self.enrollment_script.prompts.len())
+        {
+            self.reset_training_confirmation_clicks();
+            self.training_step = step;
+            self.training_step_started_at = Instant::now();
+        }
+    }
+
+    pub fn is_training_recording_active(&self) -> bool {
+        self.training_recording_active
+    }
+
+    fn reset_restart_training_confirmation(&mut self) {
+        self.restart_training_confirmation_clicks = 0;
+    }
+
+    fn reset_retry_previous_prompt_confirmation(&mut self) {
+        self.retry_previous_prompt_confirmation_clicks = 0;
+    }
+
+    fn reset_training_confirmation_clicks(&mut self) {
+        self.reset_restart_training_confirmation();
+        self.reset_retry_previous_prompt_confirmation();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppState, TrainingStep};
+    use crate::{
+        audio::devices::DeviceInventory,
+        config::settings::AppSettings,
+        profile::record::EnrollmentScript,
+    };
+
+    #[test]
+    fn training_step_sequence_advances_linearly() {
+        let prompt_count = 10;
+        let mut step = TrainingStep::Preparation;
+        let mut positions = Vec::new();
+
+        for _ in 0..TrainingStep::total_steps(prompt_count) {
+            positions.push(step.position(prompt_count));
+            step = step.advance(prompt_count);
+        }
+
+        assert_eq!(positions, (1..=25).collect::<Vec<_>>());
+        assert_eq!(step, TrainingStep::Review);
+    }
+
+    #[test]
+    fn retry_previous_prompt_targets_previous_fixed_prompt() {
+        assert_eq!(
+            TrainingStep::FixedPrompt { index: 3 }.retry_previous_prompt(10),
+            Some(TrainingStep::FixedPromptPreparation { index: 2 })
+        );
+        assert_eq!(
+            TrainingStep::FixedPromptPreparation { index: 3 }.retry_previous_prompt(10),
+            Some(TrainingStep::FixedPromptPreparation { index: 2 })
+        );
+        assert_eq!(
+            TrainingStep::FreeSpeechPreparation.retry_previous_prompt(10),
+            Some(TrainingStep::FixedPromptPreparation { index: 9 })
+        );
+        assert_eq!(
+            TrainingStep::FreeSpeech.retry_previous_prompt(10),
+            Some(TrainingStep::FixedPromptPreparation { index: 9 })
+        );
+        assert_eq!(TrainingStep::Preparation.retry_previous_prompt(10), None);
+        assert_eq!(
+            TrainingStep::FixedPromptPreparation { index: 0 }.retry_previous_prompt(10),
+            None
+        );
+        assert_eq!(TrainingStep::FixedPrompt { index: 0 }.retry_previous_prompt(10), None);
+    }
+
+    #[test]
+    fn recording_active_steps_match_guided_recording_phases() {
+        let recording_steps = [
+            TrainingStep::AmbientSilence,
+            TrainingStep::FixedPrompt { index: 0 },
+            TrainingStep::FreeSpeech,
+        ];
+
+        let non_recording_steps = [
+            TrainingStep::Preparation,
+            TrainingStep::FixedPromptPreparation { index: 0 },
+            TrainingStep::FreeSpeechPreparation,
+            TrainingStep::Review,
+        ];
+
+        for step in recording_steps {
+            assert!(step.is_recording_phase());
+        }
+
+        for step in non_recording_steps {
+            assert!(!step.is_recording_phase());
+        }
+    }
+
+    #[test]
+    fn restart_training_requires_three_review_clicks() {
+        let mut state = test_app_state();
+        state.training_step = TrainingStep::Review;
+
+        assert!(!state.confirm_restart_training());
+        assert_eq!(state.training_step, TrainingStep::Review);
+        assert_eq!(state.restart_training_confirmation_clicks, 1);
+
+        assert!(!state.confirm_restart_training());
+        assert_eq!(state.training_step, TrainingStep::Review);
+        assert_eq!(state.restart_training_confirmation_clicks, 2);
+
+        assert!(state.confirm_restart_training());
+        assert_eq!(state.training_step, TrainingStep::Review);
+        assert_eq!(state.restart_training_confirmation_clicks, 0);
+    }
+
+    #[test]
+    fn restart_training_confirmation_only_counts_on_review_step() {
+        let mut state = test_app_state();
+
+        assert!(!state.confirm_restart_training());
+        assert_eq!(state.training_step, TrainingStep::Preparation);
+        assert_eq!(state.restart_training_confirmation_clicks, 0);
+    }
+
+    #[test]
+    fn retry_previous_prompt_requires_three_clicks() {
+        let mut state = test_app_state();
+        state.training_step = TrainingStep::FixedPrompt { index: 3 };
+
+        assert!(!state.confirm_retry_previous_prompt());
+        assert_eq!(state.training_step, TrainingStep::FixedPrompt { index: 3 });
+        assert_eq!(state.retry_previous_prompt_confirmation_clicks, 1);
+
+        assert!(!state.confirm_retry_previous_prompt());
+        assert_eq!(state.training_step, TrainingStep::FixedPrompt { index: 3 });
+        assert_eq!(state.retry_previous_prompt_confirmation_clicks, 2);
+
+        assert!(state.confirm_retry_previous_prompt());
+        assert_eq!(state.training_step, TrainingStep::FixedPrompt { index: 3 });
+        assert_eq!(state.retry_previous_prompt_confirmation_clicks, 0);
+    }
+
+    #[test]
+    fn retry_previous_prompt_confirmation_only_counts_when_retry_is_available() {
+        let mut state = test_app_state();
+
+        assert!(!state.confirm_retry_previous_prompt());
+        assert_eq!(state.training_step, TrainingStep::Preparation);
+        assert_eq!(state.retry_previous_prompt_confirmation_clicks, 0);
+    }
+
+    fn test_app_state() -> AppState {
+        AppState::new(
+            AppSettings::default(),
+            String::new(),
+            DeviceInventory::default(),
+            None,
+            EnrollmentScript {
+                locale: "zh-CN",
+                prompts: vec!["测试短句".to_owned(); 10],
+            },
+            None,
+            None,
+        )
+    }
+}
