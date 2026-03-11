@@ -831,6 +831,7 @@ Profile 建议保存为：
 - 已在应用层新增离线处理命令与状态：调试页支持恢复默认路径，默认指向 `profiles/default/recordings/free_speech.wav` 和 `profiles/default/offline_outputs/free_speech_basic_filter.wav`，便于直接做第一轮离线验证。
 - 已为调试页离线入口补充状态测试；本轮改动后 `cargo test` 25/25 通过。
 - 已按功能块把当前 M2/M3 未提交工作整理为多条 Git 提交：分别覆盖训练录音/质检/profile 后端、离线 `Basic Filter` 后端，以及应用层/GUI 接线，便于后续审阅与回退。
+- 已将当前整理后的全部 commit 推送到 `git@github.com:SEmmmer/EKSingleMic.git`，当前本地 `master` 已开始跟踪 `origin/master`。
 
 ## 20. 当前阻塞与待确认事项（持续更新）
 
@@ -944,6 +945,7 @@ Profile 建议保存为：
 - 完成 M3 当前轮命令层接线：应用层已支持直接调用离线 Basic Filter 处理默认 profile 下的 WAV 文件，避免真实样本验证仍只能依赖测试代码
 - 完成本轮验证：`cargo test` 25/25 通过；默认 `cargo build` 因运行中的 `target/debug/ek-single-mic.exe` 被 Windows 占用失败，随后使用 `cargo build --target-dir target/build-verify` 完成独立构建验证
 - 完成当前轮 Git 历史整理：已将 M2/M3 相关改动按功能块拆成多条 commit，并为每条 commit 写清晰的 `commit -m` 信息
+- 完成当前轮远端同步：已新增 `origin -> git@github.com:SEmmmer/EKSingleMic.git` 并成功执行 `git push -u origin master`
 
 ## 22. 每次提交前检查清单
 
