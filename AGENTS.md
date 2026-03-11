@@ -770,7 +770,7 @@ Profile 建议保存为：
 - 本轮主内容滚动条改动后，代码已再次通过 `cargo build`。
 - 已修正主窗口面板顺序：底部状态栏现在先于 `CentralPanel` 创建，滚动到底部时不会再遮挡主内容区最后几行。
 - 本轮底部遮挡修复后，代码已再次通过 `cargo build`。
-- 已按功能块创建首批 Git 提交：工程骨架为 `chore: bootstrap rust desktop app scaffold`，应用功能实现为 `feat: add passthrough audio routing and guided training flow`。
+- 已按功能块创建首批 Git 提交：工程骨架为 `chore: bootstrap rust desktop app scaffold`，应用功能实现为 `feat: add passthrough audio routing and guided training flow`，持续记忆文档为 `docs: add project constraints and progress log`。
 
 ## 20. 当前阻塞与待确认事项（持续更新）
 
@@ -840,7 +840,7 @@ Profile 建议保存为：
 - 记录新增训练页防误触要求：“有一段没录好，重新录制上一句话”按钮也必须连续点击 3 次后才允许真正回退生效
 - 完成训练页回退防误触：将“重新录制上一句话”改为三连击确认，补充状态机测试并再次确认 `cargo build` 通过
 - 记录新增仓库管理要求：将当前全部工作按功能块拆成几个 Git commit，并写清楚 commit message
-- 完成首批 Git 历史拆分：已按功能块创建工程骨架提交与应用功能提交，待将持续记忆文档 `AGENTS.md` 单独提交
+- 完成首批 Git 历史拆分：已按功能块创建工程骨架提交、应用功能提交与持续记忆文档提交
 
 ## 22. 每次提交前检查清单
 
