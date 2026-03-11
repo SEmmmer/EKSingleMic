@@ -1,0 +1,1 @@
+pub const MODEL_SAMPLE_RATE: u32 = 16_000;
