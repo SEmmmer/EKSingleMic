@@ -92,8 +92,30 @@ pub struct QualityReport {
 
 impl QualityReport {
     pub fn analyze_manifest(manifest: &TrainingRecordingManifest) -> Result<Self> {
+        Self::analyze_manifest_with_progress(manifest, |_, _, _| {})
+    }
+
+    pub fn analyze_manifest_with_progress<F>(
+        manifest: &TrainingRecordingManifest,
+        on_clip_analyzed: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(usize, usize, &RecordedClip),
+    {
+        Self::analyze_manifest_internal(manifest, on_clip_analyzed)
+    }
+
+    fn analyze_manifest_internal<F>(
+        manifest: &TrainingRecordingManifest,
+        mut on_clip_analyzed: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(usize, usize, &RecordedClip),
+    {
         let expected_prompt_count = manifest.fixed_prompts.len();
         let recorded_prompt_count = manifest.recorded_prompt_count();
+        let total_recorded_clip_count = manifest.recorded_clip_count();
+        let mut analyzed_clip_count = 0usize;
         let mut clip_reports = Vec::new();
         let mut issues = Vec::new();
         let mut ambient_rms_dbfs = None;
@@ -101,20 +123,29 @@ impl QualityReport {
         if let Some(ambient_clip) = &manifest.ambient_silence {
             let ambient_report = analyze_clip(ambient_clip, ACTIVITY_THRESHOLD_FLOOR_DBFS)
                 .with_context(|| {
-                    format!("failed to analyze ambient recording: {}", ambient_clip.relative_path)
+                    format!(
+                        "failed to analyze ambient recording: {}",
+                        ambient_clip.relative_path
+                    )
                 })?;
             ambient_rms_dbfs = Some(ambient_report.rms_dbfs);
             clip_reports.push(ambient_report);
+            analyzed_clip_count += 1;
+            on_clip_analyzed(analyzed_clip_count, total_recorded_clip_count, ambient_clip);
         } else {
             issues.push(QualityIssue::error("缺少环境静音录音。"));
         }
 
-        let speech_activity_threshold_dbfs = speech_activity_threshold_from_ambient(ambient_rms_dbfs);
+        let speech_activity_threshold_dbfs =
+            speech_activity_threshold_from_ambient(ambient_rms_dbfs);
         let mut total_active_speech_seconds = 0.0_f32;
 
         for (index, clip) in manifest.fixed_prompts.iter().enumerate() {
             let Some(clip) = clip else {
-                issues.push(QualityIssue::error(format!("缺少固定短句 {:02} 的录音。", index + 1)));
+                issues.push(QualityIssue::error(format!(
+                    "缺少固定短句 {:02} 的录音。",
+                    index + 1
+                )));
                 continue;
             };
 
@@ -127,6 +158,8 @@ impl QualityReport {
             })?;
             total_active_speech_seconds += report.active_seconds;
             clip_reports.push(report);
+            analyzed_clip_count += 1;
+            on_clip_analyzed(analyzed_clip_count, total_recorded_clip_count, clip);
         }
 
         if let Some(free_speech_clip) = &manifest.free_speech {
@@ -139,12 +172,19 @@ impl QualityReport {
                 })?;
             total_active_speech_seconds += report.active_seconds;
             clip_reports.push(report);
+            analyzed_clip_count += 1;
+            on_clip_analyzed(
+                analyzed_clip_count,
+                total_recorded_clip_count,
+                free_speech_clip,
+            );
         } else {
             issues.push(QualityIssue::error("缺少自由发挥录音。"));
         }
 
-        let minimum_expected_active_seconds =
-            expected_prompt_count as f32 * MIN_FIXED_PROMPT_ACTIVE_SECONDS + MIN_FREE_SPEECH_ACTIVE_SECONDS;
+        let minimum_expected_active_seconds = expected_prompt_count as f32
+            * MIN_FIXED_PROMPT_ACTIVE_SECONDS
+            + MIN_FREE_SPEECH_ACTIVE_SECONDS;
         if recorded_prompt_count == expected_prompt_count
             && manifest.free_speech.is_some()
             && total_active_speech_seconds < minimum_expected_active_seconds
@@ -281,9 +321,8 @@ fn populate_clip_issues(
             }
         }
         RecordingTakeKind::FixedPrompt { index } => {
-            let insufficient_activity =
-                activity.active_seconds < MIN_FIXED_PROMPT_ACTIVE_SECONDS
-                    || activity.activity_segment_count == 0;
+            let insufficient_activity = activity.active_seconds < MIN_FIXED_PROMPT_ACTIVE_SECONDS
+                || activity.activity_segment_count == 0;
 
             if clip.duration_seconds < MIN_FIXED_PROMPT_DURATION_SECONDS {
                 issues.push(QualityIssue::warning(format!(
@@ -388,12 +427,15 @@ fn rms_linear(samples: &[f32]) -> f32 {
         return 0.0;
     }
 
-    let mean_square = samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
+    let mean_square =
+        samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
     mean_square.sqrt()
 }
 
 fn peak_linear(samples: &[f32]) -> f32 {
-    samples.iter().fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
+    samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -438,10 +480,12 @@ fn analyze_activity(
 
 fn speech_activity_threshold_from_ambient(ambient_rms_dbfs: Option<f32>) -> f32 {
     ambient_rms_dbfs
-        .map(|value| (value + AMBIENT_ACTIVITY_MARGIN_DB).clamp(
-            ACTIVITY_THRESHOLD_FLOOR_DBFS,
-            ACTIVITY_THRESHOLD_CEILING_DBFS,
-        ))
+        .map(|value| {
+            (value + AMBIENT_ACTIVITY_MARGIN_DB).clamp(
+                ACTIVITY_THRESHOLD_FLOOR_DBFS,
+                ACTIVITY_THRESHOLD_CEILING_DBFS,
+            )
+        })
         .unwrap_or(ACTIVITY_THRESHOLD_FLOOR_DBFS)
 }
 
@@ -461,7 +505,11 @@ mod tests {
     #[test]
     fn quiet_complete_manifest_passes_basic_quality_check() {
         let mut manifest = TrainingRecordingManifest::new(2);
-        manifest.register(test_clip(RecordingTakeKind::AmbientSilence, "ambient.wav", 5.0));
+        manifest.register(test_clip(
+            RecordingTakeKind::AmbientSilence,
+            "ambient.wav",
+            5.0,
+        ));
         manifest.register(test_clip(
             RecordingTakeKind::FixedPrompt { index: 0 },
             "prompt01.wav",
@@ -506,14 +554,18 @@ mod tests {
         let report = analyze_samples(&clip, &vec![0.0; 16_000], -35.0);
 
         assert_eq!(report.severity(), QualitySeverity::Error);
-        assert!(report
-            .issues
-            .iter()
-            .any(|issue| issue.message.contains("有效语音不足")));
-        assert!(!report
-            .issues
-            .iter()
-            .any(|issue| issue.message.contains("平均音量偏低")));
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("有效语音不足"))
+        );
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("平均音量偏低"))
+        );
     }
 
     #[test]
@@ -525,14 +577,18 @@ mod tests {
         );
         let report = analyze_samples(&clip, &alternating_speech_samples(16_000, 1.0, 0.7), -35.0);
 
-        assert!(!report
-            .issues
-            .iter()
-            .any(|issue| issue.message.contains("平均音量偏高")));
-        assert!(!report
-            .issues
-            .iter()
-            .any(|issue| issue.message.contains("爆音风险")));
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("平均音量偏高"))
+        );
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("爆音风险"))
+        );
     }
 
     #[test]
@@ -546,7 +602,11 @@ mod tests {
         assert_eq!(report.expected_prompt_count, 2);
     }
 
-    fn test_clip(kind: RecordingTakeKind, relative_path: &str, duration_seconds: f32) -> RecordedClip {
+    fn test_clip(
+        kind: RecordingTakeKind,
+        relative_path: &str,
+        duration_seconds: f32,
+    ) -> RecordedClip {
         RecordedClip {
             kind,
             label: kind.label(),
@@ -558,7 +618,11 @@ mod tests {
         }
     }
 
-    fn alternating_speech_samples(sample_rate_hz: u32, duration_seconds: f32, amplitude: f32) -> Vec<f32> {
+    fn alternating_speech_samples(
+        sample_rate_hz: u32,
+        duration_seconds: f32,
+        amplitude: f32,
+    ) -> Vec<f32> {
         let frame_size = ((sample_rate_hz as usize) / 10).max(1);
         let total_samples = (sample_rate_hz as f32 * duration_seconds) as usize;
         let mut samples = Vec::with_capacity(total_samples);

@@ -136,6 +136,12 @@ impl TrainingRecordingManifest {
         self.fixed_prompts.iter().flatten().count()
     }
 
+    pub fn recorded_clip_count(&self) -> usize {
+        usize::from(self.ambient_silence.is_some())
+            + self.recorded_prompt_count()
+            + usize::from(self.free_speech.is_some())
+    }
+
     pub fn is_complete(&self) -> bool {
         self.ambient_silence.is_some()
             && self.free_speech.is_some()
@@ -321,8 +327,9 @@ impl RecordingSession {
     }
 
     pub fn finish(self) -> Result<RecordedClip> {
-        let (raw_recording, absolute_path, relative_path, kind, sample_rate_hz) =
-            self.stop_capture().context("failed to finalize training recording")?;
+        let (raw_recording, absolute_path, relative_path, kind, sample_rate_hz) = self
+            .stop_capture()
+            .context("failed to finalize training recording")?;
         write_recording_wav(&absolute_path, sample_rate_hz, &raw_recording.samples)?;
 
         Ok(RecordedClip {
@@ -353,9 +360,7 @@ impl RecordingSession {
         Ok(())
     }
 
-    fn stop_capture(
-        mut self,
-    ) -> Result<(RawRecording, PathBuf, String, RecordingTakeKind, u32)> {
+    fn stop_capture(mut self) -> Result<(RawRecording, PathBuf, String, RecordingTakeKind, u32)> {
         let kind = self.kind;
         let sample_rate_hz = self.sample_rate_hz;
         let absolute_path = std::mem::take(&mut self.absolute_path);
@@ -413,9 +418,12 @@ fn scan_recordings_dir(
     let mut unexpected_entries = Vec::new();
     let mut invalid_entries = Vec::new();
 
-    for entry in fs::read_dir(&recordings_dir)
-        .with_context(|| format!("failed to read recordings directory: {}", recordings_dir.display()))?
-    {
+    for entry in fs::read_dir(&recordings_dir).with_context(|| {
+        format!(
+            "failed to read recordings directory: {}",
+            recordings_dir.display()
+        )
+    })? {
         let entry = entry.with_context(|| {
             format!(
                 "failed to inspect recordings directory entry: {}",
@@ -473,8 +481,12 @@ pub fn clear_default_recordings_dir() -> Result<()> {
         return Ok(());
     }
 
-    fs::remove_dir_all(&recordings_dir)
-        .with_context(|| format!("failed to clear recordings directory: {}", recordings_dir.display()))
+    fs::remove_dir_all(&recordings_dir).with_context(|| {
+        format!(
+            "failed to clear recordings directory: {}",
+            recordings_dir.display()
+        )
+    })
 }
 
 pub fn source_recordings_from_manifest(manifest: &TrainingRecordingManifest) -> Vec<String> {
@@ -540,11 +552,17 @@ fn expected_recording_entries(
 ) -> Vec<(RecordingTakeKind, String)> {
     let mut entries = Vec::with_capacity(prompt_count + 2);
     let ambient = RecordingTakeKind::AmbientSilence;
-    entries.push((ambient, normalize_relative_path(&recordings_dir.join(ambient.file_name()))));
+    entries.push((
+        ambient,
+        normalize_relative_path(&recordings_dir.join(ambient.file_name())),
+    ));
 
     for index in 0..prompt_count {
         let kind = RecordingTakeKind::FixedPrompt { index };
-        entries.push((kind, normalize_relative_path(&recordings_dir.join(kind.file_name()))));
+        entries.push((
+            kind,
+            normalize_relative_path(&recordings_dir.join(kind.file_name())),
+        ));
     }
 
     let free_speech = RecordingTakeKind::FreeSpeech;
@@ -955,8 +973,9 @@ fn read_preview_samples(path: &Path) -> Result<Vec<f32>> {
 
 fn write_recording_wav(path: &Path, sample_rate_hz: u32, samples: &[f32]) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create recording directory: {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create recording directory: {}", parent.display())
+        })?;
     }
 
     let spec = hound::WavSpec {
@@ -991,15 +1010,20 @@ mod tests {
     };
 
     use super::{
-        DEFAULT_PROFILE_ID, EnrollmentScript, RECORDINGS_SUBDIR, RecordedClip,
-        RecordingTakeKind, TrainingRecordingManifest, scan_recordings_dir,
+        DEFAULT_PROFILE_ID, EnrollmentScript, RECORDINGS_SUBDIR, RecordedClip, RecordingTakeKind,
+        TrainingRecordingManifest, scan_recordings_dir,
     };
 
     #[test]
     fn bundled_zh_cn_prompts_are_present() {
         let script = EnrollmentScript::load_bundled_zh_cn().expect("bundled prompts should load");
         assert_eq!(script.prompts.len(), super::REQUIRED_PROMPT_COUNT);
-        assert!(script.prompts.iter().all(|prompt| !prompt.trim().is_empty()));
+        assert!(
+            script
+                .prompts
+                .iter()
+                .all(|prompt| !prompt.trim().is_empty())
+        );
     }
 
     #[test]
@@ -1031,9 +1055,27 @@ mod tests {
     }
 
     #[test]
+    fn recorded_clip_count_includes_ambient_prompts_and_free_speech() {
+        let mut manifest = TrainingRecordingManifest::new(3);
+        assert_eq!(manifest.recorded_clip_count(), 0);
+
+        manifest.register(test_clip(RecordingTakeKind::AmbientSilence, "ambient.wav"));
+        manifest.register(test_clip(
+            RecordingTakeKind::FixedPrompt { index: 1 },
+            "prompt_02.wav",
+        ));
+        manifest.register(test_clip(RecordingTakeKind::FreeSpeech, "free.wav"));
+
+        assert_eq!(manifest.recorded_clip_count(), 3);
+    }
+
+    #[test]
     fn scan_default_recordings_detects_complete_expected_set() {
         let root = unique_test_root();
-        let recordings_dir = root.join("profiles").join(DEFAULT_PROFILE_ID).join(RECORDINGS_SUBDIR);
+        let recordings_dir = root
+            .join("profiles")
+            .join(DEFAULT_PROFILE_ID)
+            .join(RECORDINGS_SUBDIR);
         fs::create_dir_all(&recordings_dir).expect("recordings dir should exist");
         write_test_wav(&recordings_dir.join("ambient_silence.wav"), 16_000, 16_000);
         write_test_wav(&recordings_dir.join("fixed_prompt_01.wav"), 16_000, 16_000);
@@ -1054,7 +1096,10 @@ mod tests {
     #[test]
     fn scan_default_recordings_flags_missing_and_unexpected_entries() {
         let root = unique_test_root();
-        let recordings_dir = root.join("profiles").join(DEFAULT_PROFILE_ID).join(RECORDINGS_SUBDIR);
+        let recordings_dir = root
+            .join("profiles")
+            .join(DEFAULT_PROFILE_ID)
+            .join(RECORDINGS_SUBDIR);
         fs::create_dir_all(&recordings_dir).expect("recordings dir should exist");
         write_test_wav(&recordings_dir.join("ambient_silence.wav"), 16_000, 16_000);
         fs::write(recordings_dir.join("notes.txt"), "unexpected").expect("misc file should write");
@@ -1100,7 +1145,9 @@ mod tests {
         let mut writer = hound::WavWriter::create(path, spec).expect("test wav should create");
         for index in 0..sample_count {
             let sample = if index % 128 == 0 { 0.25 } else { 0.0 };
-            writer.write_sample(sample).expect("test sample should write");
+            writer
+                .write_sample(sample)
+                .expect("test sample should write");
         }
         writer.finalize().expect("test wav should finalize");
     }

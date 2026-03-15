@@ -1,8 +1,12 @@
 use eframe::egui;
 
 use crate::{
-    app::{commands::AppCommand, state::AppState},
+    app::{
+        commands::AppCommand,
+        state::{AppState, BusyAction},
+    },
     audio::devices::DeviceDescriptor,
+    config::settings::InferenceMode,
     pipeline::realtime::RuntimeStage,
 };
 
@@ -15,13 +19,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.horizontal(|ui| {
         ui.label(format!("音频 Host: {}", state.device_inventory.host_name));
-        if ui.button("刷新设备").clicked() {
+        if ui
+            .add_enabled(!state.is_busy(), egui::Button::new("刷新设备"))
+            .clicked()
+        {
             state.queue_command(AppCommand::RefreshAudioDevices);
         }
     });
 
     if let Some(error) = &state.last_device_error {
-        ui.colored_label(egui::Color32::from_rgb(220, 90, 90), format!("设备枚举失败: {error}"));
+        ui.colored_label(
+            egui::Color32::from_rgb(220, 90, 90),
+            format!("设备枚举失败: {error}"),
+        );
     }
 
     if let Some(route) = state.device_inventory.virtual_cable_route.clone() {
@@ -51,7 +61,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     egui::Color32::from_rgb(220, 170, 90),
                     "当前输出设备不是 VB-CABLE，OBS / Discord 不会收到程序处理后的声音。",
                 );
-                if ui.button("切换输出到 VB-CABLE").clicked() {
+                if ui
+                    .add_enabled(!state.is_busy(), egui::Button::new("切换输出到 VB-CABLE"))
+                    .clicked()
+                {
                     state.queue_command(AppCommand::UseDetectedVirtualCableOutput);
                 }
             }
@@ -66,29 +79,55 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     }
 
     ui.separator();
+    let controls_enabled = !state.is_busy();
     render_device_selector(
         ui,
         "输入设备",
         &state.device_inventory.input_devices,
         &mut state.settings.selected_input_device,
+        controls_enabled,
     );
     render_device_selector(
         ui,
         "输出设备",
         &state.device_inventory.output_devices,
         &mut state.settings.selected_output_device,
+        controls_enabled,
     );
 
     ui.separator();
-    match state.runtime_stage {
-        RuntimeStage::Stopped => {
-            if ui.button("启动 Passthrough").clicked() {
-                state.queue_command(AppCommand::StartRealtime);
+    if let Some(busy) = state.busy_state_for(BusyAction::StartRealtime) {
+        show_loading_start_button(
+            ui,
+            state.settings.inference_mode,
+            busy.detail.as_str(),
+            busy.progress,
+        );
+    } else {
+        match state.runtime_stage {
+            RuntimeStage::Stopped => {
+                if ui
+                    .add_enabled(
+                        !state.is_busy(),
+                        egui::Button::new(start_button_label(state.settings.inference_mode)),
+                    )
+                    .clicked()
+                {
+                    state.begin_busy_action(
+                        BusyAction::StartRealtime,
+                        format!("正在准备启动 {}", state.settings.inference_mode.label()),
+                        0.05,
+                    );
+                    state.queue_command(AppCommand::StartRealtime);
+                }
             }
-        }
-        RuntimeStage::RunningPassthrough => {
-            if ui.button("停止 Passthrough").clicked() {
-                state.queue_command(AppCommand::StopRealtime);
+            RuntimeStage::RunningPassthrough | RuntimeStage::RunningBasicFilter => {
+                if ui
+                    .add_enabled(!state.is_busy(), egui::Button::new("停止实时链路"))
+                    .clicked()
+                {
+                    state.queue_command(AppCommand::StopRealtime);
+                }
             }
         }
     }
@@ -101,14 +140,23 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     ui.label(format!("当前状态: {}", state.runtime_stage.label()));
     ui.label(format!(
         "输入峰值: {:.1} dBFS | 输出峰值: {:.1} dBFS",
-        state.runtime_metrics.input_peak_dbfs,
-        state.runtime_metrics.output_peak_dbfs
+        state.runtime_metrics.input_peak_dbfs, state.runtime_metrics.output_peak_dbfs
     ));
     ui.label(format!(
         "输入丢帧: {} | 输出补零帧: {}",
-        state.runtime_metrics.dropped_input_frames,
-        state.runtime_metrics.missing_output_frames
+        state.runtime_metrics.dropped_input_frames, state.runtime_metrics.missing_output_frames
     ));
+    if matches!(state.runtime_stage, RuntimeStage::RunningBasicFilter) {
+        ui.label(format!(
+            "当前 speaker score: {:.3} | 当前增益: {:.3}",
+            state.runtime_metrics.current_similarity, state.runtime_metrics.current_frame_gain
+        ));
+        ui.label(format!(
+            "最近 chunk 活动帧: {} / {}",
+            state.runtime_metrics.last_chunk_active_frames,
+            state.runtime_metrics.last_chunk_analyzed_frames
+        ));
+    }
 
     if let Some(format) = &state.runtime_format {
         ui.separator();
@@ -127,29 +175,58 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
+fn start_button_label(mode: InferenceMode) -> &'static str {
+    match mode {
+        InferenceMode::Passthrough => "启动 Passthrough",
+        InferenceMode::BasicFilter => "启动 Basic Filter",
+        InferenceMode::StrongIsolation => "启动 Strong Isolation",
+    }
+}
+
+fn show_loading_start_button(ui: &mut egui::Ui, mode: InferenceMode, detail: &str, progress: f32) {
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new().size(16.0));
+            ui.add_enabled(
+                false,
+                egui::Button::new(format!("正在启动 {}", mode.label())),
+            );
+        });
+        ui.small(detail);
+        ui.add(
+            egui::ProgressBar::new(progress)
+                .desired_width(280.0)
+                .show_percentage(),
+        );
+    });
+}
+
 fn render_device_selector(
     ui: &mut egui::Ui,
     label: &str,
     devices: &[DeviceDescriptor],
     selected_device: &mut Option<String>,
+    enabled: bool,
 ) {
     let mut selected_name = selected_device
         .clone()
         .unwrap_or_else(|| UNSELECTED_DEVICE_LABEL.to_owned());
 
-    egui::ComboBox::from_label(label)
-        .width(460.0)
-        .selected_text(selected_name.clone())
-        .show_ui(ui, |ui| {
-            if devices.is_empty() {
-                ui.label("未发现可用设备");
-                return;
-            }
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::ComboBox::from_label(label)
+            .width(460.0)
+            .selected_text(selected_name.clone())
+            .show_ui(ui, |ui| {
+                if devices.is_empty() {
+                    ui.label("未发现可用设备");
+                    return;
+                }
 
-            for device in devices {
-                ui.selectable_value(&mut selected_name, device.name.clone(), device.summary());
-            }
-        });
+                for device in devices {
+                    ui.selectable_value(&mut selected_name, device.name.clone(), device.summary());
+                }
+            });
+    });
 
     if selected_name == UNSELECTED_DEVICE_LABEL {
         *selected_device = None;

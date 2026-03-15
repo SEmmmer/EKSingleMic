@@ -65,7 +65,12 @@ pub fn find_input_device(name: Option<&str>) -> Result<cpal::Device> {
     if let Some(name) = normalize_device_name(name) {
         host.input_devices()
             .context("failed to enumerate input devices while resolving selection")?
-            .find(|device| device.name().map(|candidate| candidate == name).unwrap_or(false))
+            .find(|device| {
+                device
+                    .name()
+                    .map(|candidate| candidate == name)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| anyhow!("failed to find selected input device: {name}"))
     } else {
         host.default_input_device()
@@ -79,7 +84,12 @@ pub fn find_output_device(name: Option<&str>) -> Result<cpal::Device> {
     if let Some(name) = normalize_device_name(name) {
         host.output_devices()
             .context("failed to enumerate output devices while resolving selection")?
-            .find(|device| device.name().map(|candidate| candidate == name).unwrap_or(false))
+            .find(|device| {
+                device
+                    .name()
+                    .map(|candidate| candidate == name)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| anyhow!("failed to find selected output device: {name}"))
     } else {
         host.default_output_device()
@@ -96,9 +106,7 @@ fn describe_input_device(device: &cpal::Device) -> DeviceDescriptor {
     DeviceDescriptor {
         name,
         default_channels: default_config.as_ref().map(|config| config.channels()),
-        default_sample_rate_hz: default_config
-            .as_ref()
-            .map(|config| config.sample_rate().0),
+        default_sample_rate_hz: default_config.as_ref().map(|config| config.sample_rate().0),
     }
 }
 
@@ -111,9 +119,7 @@ fn describe_output_device(device: &cpal::Device) -> DeviceDescriptor {
     DeviceDescriptor {
         name,
         default_channels: default_config.as_ref().map(|config| config.channels()),
-        default_sample_rate_hz: default_config
-            .as_ref()
-            .map(|config| config.sample_rate().0),
+        default_sample_rate_hz: default_config.as_ref().map(|config| config.sample_rate().0),
     }
 }
 
@@ -148,16 +154,12 @@ fn detect_virtual_cable_route(
 
 fn is_vb_cable_playback_device(name: &str) -> bool {
     let normalized = normalize_for_match(name);
-    normalized.contains("vb-audio")
-        && normalized.contains("cable")
-        && normalized.contains("input")
+    normalized.contains("vb-audio") && normalized.contains("cable") && normalized.contains("input")
 }
 
 fn is_vb_cable_recording_device(name: &str) -> bool {
     let normalized = normalize_for_match(name);
-    normalized.contains("vb-audio")
-        && normalized.contains("cable")
-        && normalized.contains("output")
+    normalized.contains("vb-audio") && normalized.contains("cable") && normalized.contains("output")
 }
 
 fn normalize_for_match(name: &str) -> String {

@@ -1,21 +1,31 @@
 pub mod commands;
 pub mod state;
 
-use std::{collections::BTreeSet, fs, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::PathBuf,
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    thread,
+};
 
 use anyhow::{Context, Result, anyhow};
 use eframe::{CreationContext, egui};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    app::{commands::AppCommand, state::AppState},
-    config::settings::UiPage,
+    app::{
+        commands::AppCommand,
+        state::{AppState, BusyAction},
+    },
     audio::devices::{DeviceInventory, enumerate_audio_devices},
-    config::settings::SettingsStore,
+    config::settings::UiPage,
+    config::settings::{InferenceMode, SettingsStore},
     pipeline::{
         OfflineBasicFilterProcessor,
-        realtime::{PassthroughRuntime, RuntimeStage},
+        realtime::{RealtimeRuntime, RuntimeStage},
     },
+    profile::storage::{ProfileSummary, SpeakerProfileStore},
     profile::{
         build::SpeakerProfileBuilder,
         quality::QualityReport,
@@ -24,7 +34,6 @@ use crate::{
             clear_default_recordings_dir, scan_default_recordings, source_recordings_from_manifest,
         },
     },
-    profile::storage::{ProfileSummary, SpeakerProfileStore},
     ui,
 };
 
@@ -34,9 +43,43 @@ pub struct SingleMicApp {
     state: AppState,
     settings_store: SettingsStore,
     profile_store: SpeakerProfileStore,
-    passthrough_runtime: Option<PassthroughRuntime>,
+    realtime_runtime: Option<RealtimeRuntime>,
     training_recording_session: Option<RecordingSession>,
     training_preview_session: Option<RecordingPreviewSession>,
+    background_task: Option<BackgroundTaskHandle>,
+}
+
+struct BackgroundTaskHandle {
+    action: BusyAction,
+    receiver: Receiver<BackgroundTaskEvent>,
+    pending_result: Option<BackgroundTaskResult>,
+}
+
+enum BackgroundTaskEvent {
+    Progress { detail: String, progress: f32 },
+    Finished(BackgroundTaskResult),
+}
+
+enum BackgroundTaskResult {
+    LoadDetectedTrainingRecordings(LoadDetectedTrainingRecordingsTaskResult),
+    StartRealtime(StartRealtimeTaskResult),
+}
+
+struct LoadDetectedTrainingRecordingsTaskResult {
+    manifest: crate::profile::record::TrainingRecordingManifest,
+    quality_report: Option<QualityReport>,
+    quality_error: Option<String>,
+    profile_refresh: ProfileRefreshOutcome,
+}
+
+enum ProfileRefreshOutcome {
+    Unchanged,
+    Updated(Option<ProfileSummary>),
+    Failed(String),
+}
+
+struct StartRealtimeTaskResult {
+    runtime: Result<RealtimeRuntime, String>,
 }
 
 impl SingleMicApp {
@@ -44,12 +87,13 @@ impl SingleMicApp {
         install_source_han_sans(&creation_context.egui_ctx);
 
         let settings_store = SettingsStore::new()?;
-        let profile_store = SpeakerProfileStore::new().context("failed to initialize speaker profile store")?;
+        let profile_store =
+            SpeakerProfileStore::new().context("failed to initialize speaker profile store")?;
         let mut settings = settings_store.load().context("failed to load settings")?;
         let config_path = settings_store.path().display().to_string();
         let (device_inventory, last_device_error) = Self::load_device_inventory();
-        let enrollment_script =
-            EnrollmentScript::load_bundled_zh_cn().context("failed to load bundled zh-CN prompts")?;
+        let enrollment_script = EnrollmentScript::load_bundled_zh_cn()
+            .context("failed to load bundled zh-CN prompts")?;
         let (default_profile_summary, last_profile_error) =
             Self::load_default_profile_summary(&profile_store);
         let startup_recording_prompt =
@@ -71,9 +115,10 @@ impl SingleMicApp {
             ),
             settings_store,
             profile_store,
-            passthrough_runtime: None,
+            realtime_runtime: None,
             training_recording_session: None,
             training_preview_session: None,
+            background_task: None,
         })
     }
 
@@ -126,15 +171,17 @@ impl SingleMicApp {
                 );
             }
             AppCommand::UseDetectedVirtualCableOutput => self.use_detected_virtual_cable_output(),
-            AppCommand::StartRealtime => self.start_passthrough(),
-            AppCommand::StopRealtime => self.stop_passthrough(),
+            AppCommand::StartRealtime => self.start_realtime_runtime_task(),
+            AppCommand::StopRealtime => self.stop_realtime_runtime(),
             AppCommand::RunOfflineBasicFilter => self.run_offline_basic_filter(),
             AppCommand::AdvanceTrainingStep => self.advance_training_step(),
             AppCommand::RetryPreviousPrompt => self.retry_previous_prompt(),
             AppCommand::RestartTrainingFlow => self.restart_training_flow(),
             AppCommand::StartReviewRerecord { kind } => self.start_review_rerecord(kind),
             AppCommand::PreviewRecordedClip { kind } => self.start_preview_recording(kind),
-            AppCommand::LoadDetectedTrainingRecordings => self.load_detected_training_recordings(),
+            AppCommand::LoadDetectedTrainingRecordings => {
+                self.start_load_detected_training_recordings_task()
+            }
             AppCommand::OverwriteDetectedTrainingRecordings => {
                 self.overwrite_detected_training_recordings()
             }
@@ -147,49 +194,273 @@ impl SingleMicApp {
         }
     }
 
-    fn start_passthrough(&mut self) {
+    fn start_realtime_runtime_task(&mut self) {
         if self.training_recording_session.is_some() {
             self.state.last_runtime_error =
                 Some("训练录音正在占用麦克风，请先完成或退出当前训练录音步骤。".to_owned());
+            self.state.finish_busy_action();
+            return;
+        }
+
+        if self.background_task.is_some() {
             return;
         }
 
         self.stop_training_preview();
+        self.stop_realtime_runtime();
 
-        self.stop_passthrough();
+        let mode = self.state.settings.inference_mode;
+        let selected_input_device = self.state.settings.selected_input_device.clone();
+        let selected_output_device = self.state.settings.selected_output_device.clone();
+        let profile_store = self.profile_store.clone();
+        let (sender, receiver) = mpsc::channel();
+        let spawn_result = spawn_background_task("ek-start-realtime-task", move || {
+            send_task_progress(&sender, "正在准备实时链路", 0.08);
 
-        match PassthroughRuntime::start(
-            self.state.settings.selected_input_device.as_deref(),
-            self.state.settings.selected_output_device.as_deref(),
-        ) {
-            Ok(runtime) => {
-                self.state.runtime_format = Some(runtime.format_summary().clone());
-                self.state.runtime_metrics = runtime.metrics_snapshot();
-                self.state.runtime_stage = RuntimeStage::RunningPassthrough;
-                self.state.last_runtime_error = None;
-                self.passthrough_runtime = Some(runtime);
+            let loaded_profile = if matches!(mode, InferenceMode::BasicFilter) {
+                send_task_progress(&sender, "正在加载默认 speaker profile", 0.28);
+                match profile_store.load_default() {
+                    Ok(profile) => Some(profile),
+                    Err(error) => {
+                        let message = format!("{error:#}");
+                        tracing::error!(
+                            error = %message,
+                            "failed to load default profile for realtime basic filter"
+                        );
+                        let _ = sender.send(BackgroundTaskEvent::Finished(
+                            BackgroundTaskResult::StartRealtime(StartRealtimeTaskResult {
+                                runtime: Err(message),
+                            }),
+                        ));
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
+            send_task_progress(&sender, "正在打开音频设备并创建实时链路", 0.62);
+            let runtime = RealtimeRuntime::start(
+                mode,
+                selected_input_device.as_deref(),
+                selected_output_device.as_deref(),
+                loaded_profile.as_ref(),
+            )
+            .map_err(|error| {
+                let message = format!("{error:#}");
+                tracing::error!(
+                    error = %message,
+                    mode = %mode.label(),
+                    "failed to start realtime runtime"
+                );
+                message
+            });
+
+            send_task_progress(&sender, "正在同步实时状态", 0.9);
+            let _ = sender.send(BackgroundTaskEvent::Finished(
+                BackgroundTaskResult::StartRealtime(StartRealtimeTaskResult { runtime }),
+            ));
+        });
+
+        match spawn_result {
+            Ok(()) => {
+                self.background_task = Some(BackgroundTaskHandle {
+                    action: BusyAction::StartRealtime,
+                    receiver,
+                    pending_result: None,
+                });
             }
             Err(error) => {
-                let message = format!("{error:#}");
-                tracing::error!(error = %message, "failed to start passthrough runtime");
+                self.state.finish_busy_action();
                 self.state.runtime_stage = RuntimeStage::Stopped;
-                self.state.last_runtime_error = Some(message);
+                self.state.last_runtime_error = Some(format!("无法启动实时后台任务：{error}"));
             }
         }
     }
 
-    fn stop_passthrough(&mut self) {
-        self.passthrough_runtime = None;
+    fn stop_realtime_runtime(&mut self) {
+        self.realtime_runtime = None;
         self.state.runtime_stage = RuntimeStage::Stopped;
         self.state.runtime_metrics = Default::default();
         self.state.runtime_format = None;
     }
 
     fn sync_runtime_state(&mut self) {
-        if let Some(runtime) = &self.passthrough_runtime {
-            self.state.runtime_stage = RuntimeStage::RunningPassthrough;
+        if let Some(runtime) = &self.realtime_runtime {
+            self.state.runtime_stage = runtime.stage();
             self.state.runtime_metrics = runtime.metrics_snapshot();
             self.state.runtime_format = Some(runtime.format_summary().clone());
+        }
+    }
+
+    fn poll_runtime_output_readiness(&mut self) {
+        let Some(runtime) = &self.realtime_runtime else {
+            return;
+        };
+        if self.background_task.is_some()
+            || self
+                .state
+                .busy_state_for(BusyAction::StartRealtime)
+                .is_none()
+        {
+            return;
+        }
+
+        let output_name = runtime.format_summary().output_device_name.clone();
+        if runtime.is_output_ready()
+            && self
+                .state
+                .has_satisfied_busy_minimum_duration(BusyAction::StartRealtime)
+        {
+            self.state.finish_busy_action();
+            return;
+        }
+
+        self.state.update_busy_action(
+            BusyAction::StartRealtime,
+            format!("正在等待 {output_name} 进入可输出 Basic Filter 音频状态"),
+            0.98,
+        );
+    }
+
+    fn poll_background_task(&mut self) {
+        enum PollOutcome {
+            Finished(BackgroundTaskResult),
+            Disconnected(BusyAction),
+        }
+
+        let Some(mut task) = self.background_task.take() else {
+            return;
+        };
+
+        if let Some(result) = task.pending_result.take() {
+            if self.state.has_satisfied_busy_minimum_duration(task.action) {
+                if self.apply_background_task_result(result) {
+                    self.state.finish_busy_action();
+                }
+            } else {
+                task.pending_result = Some(result);
+                self.background_task = Some(task);
+            }
+            return;
+        }
+
+        let mut outcome = None;
+
+        loop {
+            match task.receiver.try_recv() {
+                Ok(BackgroundTaskEvent::Progress { detail, progress }) => {
+                    self.state.update_busy_action(task.action, detail, progress);
+                }
+                Ok(BackgroundTaskEvent::Finished(result)) => {
+                    outcome = Some(PollOutcome::Finished(result));
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    outcome = Some(PollOutcome::Disconnected(task.action));
+                    break;
+                }
+            }
+        }
+
+        match outcome {
+            Some(PollOutcome::Finished(result)) => {
+                if self.state.has_satisfied_busy_minimum_duration(task.action) {
+                    if self.apply_background_task_result(result) {
+                        self.state.finish_busy_action();
+                    }
+                } else {
+                    task.pending_result = Some(result);
+                    self.background_task = Some(task);
+                }
+            }
+            Some(PollOutcome::Disconnected(action)) => {
+                self.state.finish_busy_action();
+                self.apply_background_task_disconnect(action);
+            }
+            None => {
+                self.background_task = Some(task);
+            }
+        }
+    }
+
+    fn apply_background_task_result(&mut self, result: BackgroundTaskResult) -> bool {
+        match result {
+            BackgroundTaskResult::LoadDetectedTrainingRecordings(result) => {
+                self.apply_load_detected_training_recordings_result(result);
+                true
+            }
+            BackgroundTaskResult::StartRealtime(result) => {
+                self.apply_start_realtime_task_result(result)
+            }
+        }
+    }
+
+    fn apply_background_task_disconnect(&mut self, action: BusyAction) {
+        let message = "后台任务意外中断，未能返回结果。".to_owned();
+        tracing::error!(action = ?action, error = %message, "background task disconnected");
+
+        match action {
+            BusyAction::LoadDetectedTrainingRecordings => {
+                self.state.last_training_quality_error = Some(message);
+            }
+            BusyAction::StartRealtime => {
+                self.state.runtime_stage = RuntimeStage::Stopped;
+                self.state.last_runtime_error = Some(message);
+            }
+        }
+    }
+
+    fn apply_load_detected_training_recordings_result(
+        &mut self,
+        result: LoadDetectedTrainingRecordingsTaskResult,
+    ) {
+        self.state
+            .load_detected_training_recordings(result.manifest);
+        self.state.training_quality_report = result.quality_report;
+        self.state.last_training_quality_error = result.quality_error;
+
+        match result.profile_refresh {
+            ProfileRefreshOutcome::Unchanged => {}
+            ProfileRefreshOutcome::Updated(summary) => {
+                self.state.default_profile_summary = summary;
+                self.state.last_profile_error = None;
+            }
+            ProfileRefreshOutcome::Failed(message) => {
+                self.state.last_profile_error = Some(message);
+            }
+        }
+    }
+
+    fn apply_start_realtime_task_result(&mut self, result: StartRealtimeTaskResult) -> bool {
+        match result.runtime {
+            Ok(runtime) => {
+                self.state.runtime_stage = runtime.stage();
+                self.state.runtime_format = Some(runtime.format_summary().clone());
+                self.state.runtime_metrics = runtime.metrics_snapshot();
+                self.state.last_runtime_error = None;
+                let output_name = runtime.format_summary().output_device_name.clone();
+                let output_ready = runtime.is_output_ready();
+                self.realtime_runtime = Some(runtime);
+                if output_ready {
+                    true
+                } else {
+                    self.state.update_busy_action(
+                        BusyAction::StartRealtime,
+                        format!("正在等待 {output_name} 进入可输出 Basic Filter 音频状态"),
+                        0.98,
+                    );
+                    false
+                }
+            }
+            Err(message) => {
+                self.state.runtime_stage = RuntimeStage::Stopped;
+                self.state.runtime_format = None;
+                self.state.runtime_metrics = Default::default();
+                self.state.last_runtime_error = Some(message);
+                true
+            }
         }
     }
 
@@ -210,7 +481,9 @@ impl SingleMicApp {
 
         self.state.retry_previous_prompt();
 
-        if let crate::app::state::TrainingStep::FixedPromptPreparation { index } = self.state.training_step {
+        if let crate::app::state::TrainingStep::FixedPromptPreparation { index } =
+            self.state.training_step
+        {
             let removed = self.state.training_recordings.clear_from_prompt(index);
             self.delete_recorded_clips(removed);
         }
@@ -230,18 +503,136 @@ impl SingleMicApp {
         self.clear_training_quality_report();
     }
 
-    fn load_detected_training_recordings(&mut self) {
+    fn start_load_detected_training_recordings_task(&mut self) {
         let Some(prompt) = self.state.startup_recording_prompt.clone() else {
+            self.state.finish_busy_action();
             return;
         };
+
+        if self.background_task.is_some() {
+            return;
+        }
 
         self.stop_training_preview();
         self.discard_current_training_recording();
         self.reset_training_recording_feedback();
         self.state.last_training_recording_error = None;
         self.state.last_training_preview_error = None;
-        self.state.load_detected_training_recordings(prompt.detected_recordings.manifest);
-        self.refresh_training_quality_report();
+        self.state.last_training_quality_error = None;
+
+        let manifest = prompt.detected_recordings.manifest;
+        let enrollment_script = self.state.enrollment_script.clone();
+        let profile_store = self.profile_store.clone();
+        let (sender, receiver) = mpsc::channel();
+        let spawn_result = spawn_background_task("ek-load-recordings-task", move || {
+            let total_clips = manifest.recorded_clip_count();
+            let total_clips = total_clips.max(1);
+            send_task_progress(&sender, format!("正在载入训练音频 0/{total_clips}"), 0.02);
+
+            let quality_report = match QualityReport::analyze_manifest_with_progress(
+                &manifest,
+                |done, total, clip| {
+                    let progress = 0.08 + 0.72 * (done as f32 / total.max(1) as f32);
+                    send_task_progress(
+                        &sender,
+                        format!("正在载入训练音频 {done}/{total}：{}", clip.label),
+                        progress,
+                    );
+                },
+            ) {
+                Ok(report) => Some(report),
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    tracing::error!(error = %message, "failed to analyze training quality");
+                    let _ = sender.send(BackgroundTaskEvent::Finished(
+                        BackgroundTaskResult::LoadDetectedTrainingRecordings(
+                            LoadDetectedTrainingRecordingsTaskResult {
+                                manifest,
+                                quality_report: None,
+                                quality_error: Some(message),
+                                profile_refresh: ProfileRefreshOutcome::Unchanged,
+                            },
+                        ),
+                    ));
+                    return;
+                }
+            };
+
+            send_task_progress(
+                &sender,
+                format!("训练音频已载入 {total_clips}/{total_clips}，正在刷新默认 profile"),
+                0.86,
+            );
+            let profile_refresh = match quality_report.as_ref() {
+                Some(report) => match SpeakerProfileBuilder::build_default(
+                    &manifest,
+                    report,
+                    &enrollment_script,
+                ) {
+                    Ok(profile) => {
+                        if let Err(error) = profile_store.save_default(&profile) {
+                            let message = format!("{error:#}");
+                            tracing::error!(error = %message, "failed to save default profile");
+                            ProfileRefreshOutcome::Failed(message)
+                        } else {
+                            send_task_progress(
+                                &sender,
+                                format!(
+                                    "训练音频已载入 {total_clips}/{total_clips}，正在同步 profile 摘要"
+                                ),
+                                0.95,
+                            );
+                            match profile_store.load_default_profile_summary() {
+                                Ok(summary) => ProfileRefreshOutcome::Updated(summary),
+                                Err(error) => {
+                                    let message = format!("{error:#}");
+                                    tracing::error!(
+                                        error = %message,
+                                        "failed to inspect default profile after async reload"
+                                    );
+                                    ProfileRefreshOutcome::Failed(message)
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let message = format!("{error:#}");
+                        tracing::error!(
+                            error = %message,
+                            "failed to build default profile from training data"
+                        );
+                        ProfileRefreshOutcome::Failed(message)
+                    }
+                },
+                None => ProfileRefreshOutcome::Unchanged,
+            };
+
+            let _ = sender.send(BackgroundTaskEvent::Finished(
+                BackgroundTaskResult::LoadDetectedTrainingRecordings(
+                    LoadDetectedTrainingRecordingsTaskResult {
+                        manifest,
+                        quality_report,
+                        quality_error: None,
+                        profile_refresh,
+                    },
+                ),
+            ));
+        });
+
+        match spawn_result {
+            Ok(()) => {
+                self.background_task = Some(BackgroundTaskHandle {
+                    action: BusyAction::LoadDetectedTrainingRecordings,
+                    receiver,
+                    pending_result: None,
+                });
+            }
+            Err(error) => {
+                self.state.finish_busy_action();
+                self.state.last_training_quality_error =
+                    Some(format!("无法启动录音加载后台任务：{error}"));
+            }
+        }
     }
 
     fn overwrite_detected_training_recordings(&mut self) {
@@ -275,14 +666,15 @@ impl SingleMicApp {
             return;
         }
 
-        if self.passthrough_runtime.is_some() {
+        if self.realtime_runtime.is_some() {
             self.state.last_training_preview_error =
-                Some("预览录音前请先停止设备页中的 Passthrough。".to_owned());
+                Some("预览录音前请先停止当前实时链路。".to_owned());
             return;
         }
 
         let Some(clip) = self.state.training_recordings.get(kind).cloned() else {
-            self.state.last_training_preview_error = Some("当前录音片段还不存在，无法预览。".to_owned());
+            self.state.last_training_preview_error =
+                Some("当前录音片段还不存在，无法预览。".to_owned());
             return;
         };
 
@@ -313,9 +705,9 @@ impl SingleMicApp {
             return;
         }
 
-        if self.passthrough_runtime.is_some() {
+        if self.realtime_runtime.is_some() {
             self.state.last_training_recording_error =
-                Some("训练录音开始前请先停止设备页中的 Passthrough。".to_owned());
+                Some("训练录音开始前请先停止当前实时链路。".to_owned());
             self.reset_training_recording_feedback();
             return;
         }
@@ -355,7 +747,9 @@ impl SingleMicApp {
         }
 
         let processor = OfflineBasicFilterProcessor::default();
-        match processor.process_default_profile_wav(&PathBuf::from(input_path), &PathBuf::from(output_path)) {
+        match processor
+            .process_default_profile_wav(&PathBuf::from(input_path), &PathBuf::from(output_path))
+        {
             Ok(metrics) => {
                 self.state.last_offline_basic_filter_metrics = Some(metrics);
                 self.state.last_offline_basic_filter_error = None;
@@ -437,7 +831,10 @@ impl SingleMicApp {
     }
 
     fn refresh_training_quality_report(&mut self) {
-        if !matches!(self.state.training_step, crate::app::state::TrainingStep::Review) {
+        if !matches!(
+            self.state.training_step,
+            crate::app::state::TrainingStep::Review
+        ) {
             self.clear_training_quality_report();
             return;
         }
@@ -497,7 +894,10 @@ impl SingleMicApp {
             }
 
             if let Err(error) = fs::remove_file(&path) {
-                let message = format!("failed to remove discarded recording {}: {error}", path.display());
+                let message = format!(
+                    "failed to remove discarded recording {}: {error}",
+                    path.display()
+                );
                 tracing::warn!(error = %message, "failed to delete discarded training recording");
                 self.state.last_training_recording_error = Some(message);
             }
@@ -587,7 +987,8 @@ impl SingleMicApp {
             (
                 crate::app::state::StartupRecordingPromptSeverity::Info,
                 "检测到之前保存的录音".to_owned(),
-                "当前录音文件齐全，并且与 `profiles/default/speaker_profile.json` 一一对应。".to_owned(),
+                "当前录音文件齐全，并且与 `profiles/default/speaker_profile.json` 一一对应。"
+                    .to_owned(),
             )
         } else {
             (
@@ -612,6 +1013,9 @@ impl eframe::App for SingleMicApp {
         self.sync_runtime_state();
         self.sync_training_recording_feedback();
         self.sync_training_preview_state();
+        self.poll_background_task();
+        self.sync_runtime_state();
+        self.poll_runtime_output_readiness();
 
         if self.training_preview_session.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -636,9 +1040,15 @@ impl eframe::App for SingleMicApp {
 
         egui::TopBottomPanel::bottom("app_status_bar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(format!("当前页面: {}", self.state.settings.selected_page.label()));
+                ui.label(format!(
+                    "当前页面: {}",
+                    self.state.settings.selected_page.label()
+                ));
                 ui.separator();
-                ui.label(format!("推理模式: {}", self.state.settings.inference_mode.label()));
+                ui.label(format!(
+                    "推理模式: {}",
+                    self.state.settings.inference_mode.label()
+                ));
                 ui.separator();
                 ui.label(format!("音频状态: {}", self.state.runtime_stage.label()));
                 ui.separator();
@@ -646,13 +1056,19 @@ impl eframe::App for SingleMicApp {
             });
 
             if let Some(error) = &self.state.last_persist_error {
-                ui.colored_label(egui::Color32::from_rgb(220, 90, 90), format!("配置保存失败: {error}"));
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 90, 90),
+                    format!("配置保存失败: {error}"),
+                );
             } else {
                 ui.label("配置保存状态: 正常");
             }
 
             if let Some(error) = &self.state.last_runtime_error {
-                ui.colored_label(egui::Color32::from_rgb(220, 90, 90), format!("实时链路错误: {error}"));
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 90, 90),
+                    format!("实时链路错误: {error}"),
+                );
             }
         });
 
@@ -663,16 +1079,39 @@ impl eframe::App for SingleMicApp {
             self.persist_settings();
         }
 
+        if self.background_task.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+
         if let Some(command) = self.state.pending_command.take() {
             self.handle_command(command);
+            if self.state.is_busy() || self.background_task.is_some() {
+                ctx.request_repaint();
+            }
         }
     }
 }
 
+fn spawn_background_task(name: &str, task: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(task)
+        .map(|_| ())
+}
+
+fn send_task_progress(
+    sender: &Sender<BackgroundTaskEvent>,
+    detail: impl Into<String>,
+    progress: f32,
+) {
+    let _ = sender.send(BackgroundTaskEvent::Progress {
+        detail: detail.into(),
+        progress: progress.clamp(0.0, 1.0),
+    });
+}
+
 fn normalized_path_set(paths: &[String]) -> BTreeSet<String> {
-    paths.iter()
-        .map(|path| normalized_path_key(path))
-        .collect()
+    paths.iter().map(|path| normalized_path_key(path)).collect()
 }
 
 fn normalized_path_key(path: &str) -> String {
@@ -712,16 +1151,24 @@ fn show_startup_recording_prompt(ctx: &egui::Context, state: &mut AppState) {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
-                        prompt.detected_recordings.can_load(),
+                        prompt.detected_recordings.can_load() && !state.is_busy(),
                         egui::Button::new("加载文件"),
                     )
                     .clicked()
                 {
                     state.cancel_startup_recording_overwrite_confirmation();
+                    let total_clips = prompt.detected_recordings.recognized_count().max(1);
+                    state.begin_busy_action(
+                        BusyAction::LoadDetectedTrainingRecordings,
+                        format!("正在载入训练音频 0/{total_clips}"),
+                        0.02,
+                    );
                     state.queue_command(AppCommand::LoadDetectedTrainingRecordings);
                 }
 
-                if ui.button("全部覆盖重录").clicked()
+                if ui
+                    .add_enabled(!state.is_busy(), egui::Button::new("全部覆盖重录"))
+                    .clicked()
                     && state.confirm_startup_recording_overwrite()
                 {
                     state.queue_command(AppCommand::OverwriteDetectedTrainingRecordings);
@@ -730,6 +1177,17 @@ fn show_startup_recording_prompt(ctx: &egui::Context, state: &mut AppState) {
 
             if !prompt.detected_recordings.can_load() {
                 ui.small("当前没有可加载的有效训练录音文件，只能选择全部覆盖重录。");
+            }
+
+            if let Some(busy) = state.busy_state_for(BusyAction::LoadDetectedTrainingRecordings) {
+                ui.add_space(8.0);
+                ui.label(&busy.detail);
+                ui.add(
+                    egui::ProgressBar::new(busy.progress)
+                        .desired_width(520.0)
+                        .show_percentage()
+                        .text(&busy.detail),
+                );
             }
 
             if let Some((clicks, required)) = state.startup_recording_overwrite_progress() {
@@ -779,9 +1237,10 @@ fn install_source_han_sans(ctx: &egui::Context) {
         ))
         .into(),
     );
-    fonts
-        .families
-        .insert(egui::FontFamily::Proportional, vec![regular_font_name.into()]);
+    fonts.families.insert(
+        egui::FontFamily::Proportional,
+        vec![regular_font_name.into()],
+    );
     fonts
         .families
         .insert(egui::FontFamily::Monospace, vec![regular_font_name.into()]);

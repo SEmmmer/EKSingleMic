@@ -4,12 +4,12 @@ use eframe::egui::{self, FontFamily, FontId, Pos2, Rect, RichText, Shape, Stroke
 
 use crate::{
     app::{
-        commands::AppCommand,
         SOURCE_HAN_SANS_SC_BOLD_FAMILY,
+        commands::AppCommand,
         state::{
-            AppState, REVIEW_SUMMARY_RERECORD_CONFIRMATION_CLICKS,
-            RESTART_TRAINING_CONFIRMATION_CLICKS,
-            RETRY_PREVIOUS_PROMPT_CONFIRMATION_CLICKS, TrainingStep,
+            AppState, RESTART_TRAINING_CONFIRMATION_CLICKS,
+            RETRY_PREVIOUS_PROMPT_CONFIRMATION_CLICKS, REVIEW_SUMMARY_RERECORD_CONFIRMATION_CLICKS,
+            TrainingStep,
         },
     },
     pipeline::realtime::RuntimeStage,
@@ -80,7 +80,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.separator();
     ui.label("默认 profile 模式：单人单机固定使用，不提供 profile 切换。");
-    ui.label(format!("默认保存路径：profiles/{DEFAULT_PROFILE_ID}/speaker_profile.json"));
+    ui.label(format!(
+        "默认保存路径：profiles/{DEFAULT_PROFILE_ID}/speaker_profile.json"
+    ));
 
     if let Some(error) = &state.last_profile_error {
         ui.colored_label(
@@ -208,7 +210,10 @@ fn show_fixed_prompt_step(ui: &mut egui::Ui, state: &mut AppState, index: usize)
     ui.add_space(8.0);
     ui.label(RichText::new(prompt).size(28.0));
     ui.add_space(8.0);
-    ui.label(format!("还剩 {} 句固定短句。", prompt_count.saturating_sub(index + 1)));
+    ui.label(format!(
+        "还剩 {} 句固定短句。",
+        prompt_count.saturating_sub(index + 1)
+    ));
 
     let button_label = if is_last_prompt {
         "确认本句已完成，进入自由发挥准备"
@@ -423,14 +428,22 @@ fn show_input_device_status(ui: &mut egui::Ui, state: &AppState) {
         ("当前麦克风未录制", egui::Color32::from_rgb(220, 90, 90))
     };
 
-    let status_font = FontId::new(18.0, FontFamily::Name(SOURCE_HAN_SANS_SC_BOLD_FAMILY.into()));
+    let status_font = FontId::new(
+        18.0,
+        FontFamily::Name(SOURCE_HAN_SANS_SC_BOLD_FAMILY.into()),
+    );
     let status_galley = ui.fonts_mut(|fonts| {
         fonts.layout_no_wrap(status_text.to_owned(), status_font.clone(), status_color)
     });
     let row_height = status_galley.size().y.max(18.0);
 
     ui.horizontal(|ui| {
-        draw_status_icon(ui, state.is_training_recording_active(), status_color, row_height);
+        draw_status_icon(
+            ui,
+            state.is_training_recording_active(),
+            status_color,
+            row_height,
+        );
         ui.label(
             RichText::new(status_text)
                 .font(status_font)
@@ -522,7 +535,8 @@ fn draw_level_meter(ui: &mut egui::Ui, level_linear: f32, is_recording: bool, ro
     );
 
     if fill_width > 0.0 {
-        let fill_rect = Rect::from_min_size(meter_rect.min, Vec2::new(fill_width, meter_rect.height()));
+        let fill_rect =
+            Rect::from_min_size(meter_rect.min, Vec2::new(fill_width, meter_rect.height()));
         ui.painter().rect_filled(fill_rect, 3.0, fill_color);
     }
 }
@@ -551,12 +565,7 @@ fn show_recording_summary(ui: &mut egui::Ui, state: &mut AppState) {
                 .fixed_prompts
                 .get(index)
                 .and_then(|entry| entry.clone());
-            show_recording_summary_item(
-                ui,
-                state,
-                clip,
-                &format!("{:02}. {}", index + 1, prompt),
-            );
+            show_recording_summary_item(ui, state, clip, &format!("{:02}. {}", index + 1, prompt));
         }
     });
 
@@ -604,13 +613,13 @@ fn show_recording_summary_item(
     let (status_color, status_text) = if let Some(clip) = clip.as_ref() {
         (
             egui::Color32::from_rgb(70, 170, 90),
-            format!("已录制 {:.1} 秒 | {}", clip.duration_seconds, clip.relative_path),
+            format!(
+                "已录制 {:.1} 秒 | {}",
+                clip.duration_seconds, clip.relative_path
+            ),
         )
     } else {
-        (
-            egui::Color32::from_rgb(150, 150, 150),
-            "未录制".to_owned(),
-        )
+        (egui::Color32::from_rgb(150, 150, 150), "未录制".to_owned())
     };
     ui.colored_label(status_color, status_text);
 
@@ -706,11 +715,7 @@ fn show_quality_summary(ui: &mut egui::Ui, state: &mut AppState) {
         });
 }
 
-fn render_problematic_clip(
-    ui: &mut egui::Ui,
-    state: &mut AppState,
-    clip: &ClipQualityReport,
-) {
+fn render_problematic_clip(ui: &mut egui::Ui, state: &mut AppState, clip: &ClipQualityReport) {
     let (status_color, status_text) = match clip.severity() {
         QualitySeverity::Ok => (
             egui::Color32::from_rgb(70, 170, 90),

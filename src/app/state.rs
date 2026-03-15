@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{
     app::commands::AppCommand,
@@ -44,6 +44,29 @@ pub struct StartupRecordingPrompt {
     pub summary: String,
     pub details: Vec<String>,
     pub detected_recordings: DetectedTrainingRecordings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusyAction {
+    LoadDetectedTrainingRecordings,
+    StartRealtime,
+}
+
+impl BusyAction {
+    pub fn minimum_visible_duration(self) -> Duration {
+        match self {
+            Self::LoadDetectedTrainingRecordings => Duration::from_millis(0),
+            Self::StartRealtime => Duration::from_millis(450),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BusyState {
+    pub action: BusyAction,
+    pub detail: String,
+    pub progress: f32,
+    pub started_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +218,7 @@ pub struct AppState {
     pub offline_basic_filter_output_path: String,
     pub last_offline_basic_filter_metrics: Option<OfflineBasicFilterMetrics>,
     pub last_offline_basic_filter_error: Option<String>,
+    pub busy_state: Option<BusyState>,
     pub pending_command: Option<AppCommand>,
 }
 
@@ -244,6 +268,7 @@ impl AppState {
             offline_basic_filter_output_path: default_offline_basic_filter_output_path(),
             last_offline_basic_filter_metrics: None,
             last_offline_basic_filter_error: None,
+            busy_state: None,
             pending_command: None,
         }
     }
@@ -252,9 +277,62 @@ impl AppState {
         self.pending_command = Some(command);
     }
 
+    pub fn begin_busy_action(
+        &mut self,
+        action: BusyAction,
+        detail: impl Into<String>,
+        progress: f32,
+    ) {
+        self.busy_state = Some(BusyState {
+            action,
+            detail: detail.into(),
+            progress: progress.clamp(0.0, 1.0),
+            started_at: Instant::now(),
+        });
+        self.pending_command = None;
+    }
+
+    pub fn update_busy_action(
+        &mut self,
+        action: BusyAction,
+        detail: impl Into<String>,
+        progress: f32,
+    ) {
+        if let Some(busy) = self
+            .busy_state
+            .as_mut()
+            .filter(|busy| busy.action == action)
+        {
+            busy.detail = detail.into();
+            busy.progress = progress.clamp(0.0, 1.0);
+        }
+    }
+
+    pub fn finish_busy_action(&mut self) {
+        self.busy_state = None;
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy_state.is_some()
+    }
+
+    pub fn busy_state_for(&self, action: BusyAction) -> Option<&BusyState> {
+        self.busy_state
+            .as_ref()
+            .filter(|busy| busy.action == action)
+    }
+
+    pub fn has_satisfied_busy_minimum_duration(&self, action: BusyAction) -> bool {
+        self.busy_state_for(action).map_or(true, |busy| {
+            busy.started_at.elapsed() >= action.minimum_visible_duration()
+        })
+    }
+
     pub fn advance_training_step(&mut self) {
         self.reset_training_confirmation_clicks();
-        self.training_step = self.training_step.advance(self.enrollment_script.prompts.len());
+        self.training_step = self
+            .training_step
+            .advance(self.enrollment_script.prompts.len());
         self.training_step_started_at = Instant::now();
     }
 
@@ -371,10 +449,7 @@ impl AppState {
         }
     }
 
-    pub fn review_summary_rerecord_progress(
-        &self,
-        kind: RecordingTakeKind,
-    ) -> Option<(u8, u8)> {
+    pub fn review_summary_rerecord_progress(&self, kind: RecordingTakeKind) -> Option<(u8, u8)> {
         (self.review_summary_rerecord_confirmation_target == Some(kind)
             && self.review_summary_rerecord_confirmation_clicks > 0)
             .then_some((
@@ -506,7 +581,10 @@ mod tests {
             TrainingStep::FixedPromptPreparation { index: 0 }.retry_previous_prompt(10),
             None
         );
-        assert_eq!(TrainingStep::FixedPrompt { index: 0 }.retry_previous_prompt(10), None);
+        assert_eq!(
+            TrainingStep::FixedPrompt { index: 0 }.retry_previous_prompt(10),
+            None
+        );
     }
 
     #[test]
@@ -682,6 +760,32 @@ mod tests {
             state.offline_basic_filter_output_path,
             "profiles/default/offline_outputs/free_speech_basic_filter.wav"
         );
+    }
+
+    #[test]
+    fn busy_action_updates_progress_and_can_finish() {
+        let mut state = test_app_state();
+        state.begin_busy_action(super::BusyAction::StartRealtime, "正在准备实时链路", 0.4);
+
+        assert!(state.is_busy());
+        assert!(!state.has_satisfied_busy_minimum_duration(super::BusyAction::StartRealtime));
+        assert_eq!(
+            state
+                .busy_state_for(super::BusyAction::StartRealtime)
+                .map(|busy| busy.progress),
+            Some(0.4)
+        );
+
+        state.update_busy_action(super::BusyAction::StartRealtime, "正在打开音频设备", 0.75);
+        assert_eq!(
+            state
+                .busy_state_for(super::BusyAction::StartRealtime)
+                .map(|busy| (busy.detail.as_str(), busy.progress)),
+            Some(("正在打开音频设备", 0.75))
+        );
+
+        state.finish_busy_action();
+        assert!(!state.is_busy());
     }
 
     fn test_app_state() -> AppState {

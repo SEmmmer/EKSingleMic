@@ -89,8 +89,12 @@ impl SettingsStore {
             .ok_or_else(|| anyhow!("failed to resolve Windows config directory"))?;
 
         let config_dir = project_dirs.config_dir();
-        fs::create_dir_all(config_dir)
-            .with_context(|| format!("failed to create config directory: {}", config_dir.display()))?;
+        fs::create_dir_all(config_dir).with_context(|| {
+            format!(
+                "failed to create config directory: {}",
+                config_dir.display()
+            )
+        })?;
 
         Ok(Self {
             path: config_dir.join("settings.json"),
@@ -115,11 +119,15 @@ impl SettingsStore {
     pub fn save(&self, settings: &AppSettings) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create settings parent directory: {}", parent.display())
+                format!(
+                    "failed to create settings parent directory: {}",
+                    parent.display()
+                )
             })?;
         }
 
-        let json = serde_json::to_string_pretty(settings).context("failed to serialize settings")?;
+        let json =
+            serde_json::to_string_pretty(settings).context("failed to serialize settings")?;
         fs::write(&self.path, json)
             .with_context(|| format!("failed to write settings file: {}", self.path.display()))?;
         Ok(())
