@@ -101,9 +101,9 @@ impl SpeakerProfileStore {
             return Ok(None);
         }
 
-        let profile = self
-            .load_from_path(&path)
-            .with_context(|| format!("failed to load default profile summary: {}", path.display()))?;
+        let profile = self.load_from_path(&path).with_context(|| {
+            format!("failed to load default profile summary: {}", path.display())
+        })?;
 
         Ok(Some(ProfileSummary {
             profile_id: profile.profile_id,
@@ -126,11 +126,15 @@ impl SpeakerProfileStore {
     pub fn save_default(&self, profile: &SpeakerProfile) -> Result<()> {
         let profile_dir = self.root.join(DEFAULT_PROFILE_ID);
         fs::create_dir_all(&profile_dir).with_context(|| {
-            format!("failed to create profile directory: {}", profile_dir.display())
+            format!(
+                "failed to create profile directory: {}",
+                profile_dir.display()
+            )
         })?;
 
         let path = profile_dir.join(PROFILE_FILENAME);
-        let json = serde_json::to_string_pretty(profile).context("failed to serialize speaker profile")?;
+        let json =
+            serde_json::to_string_pretty(profile).context("failed to serialize speaker profile")?;
         fs::write(&path, json)
             .with_context(|| format!("failed to write profile file: {}", path.display()))?;
 
@@ -147,8 +151,8 @@ impl SpeakerProfileStore {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{fs, path::PathBuf};
 
     use super::{DEFAULT_PROFILE_ID, SpeakerProfile, SpeakerProfileStore};
 

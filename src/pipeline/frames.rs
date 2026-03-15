@@ -2,12 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
-use crate::{
-    util::{
-        audio_math::lerp,
-        time::MODEL_SAMPLE_RATE,
-    },
-};
+use crate::util::{audio_math::lerp, time::MODEL_SAMPLE_RATE};
 
 #[derive(Debug, Clone)]
 pub struct AudioClip {
@@ -54,7 +49,9 @@ impl AudioClip {
                     .map(|sample| {
                         sample
                             .map(|value| (value as f32 / scale).clamp(-1.0, 1.0))
-                            .map_err(|error| anyhow!("failed to decode offline WAV sample: {error}"))
+                            .map_err(|error| {
+                                anyhow!("failed to decode offline WAV sample: {error}")
+                            })
                     })
                     .collect::<Result<Vec<_>, _>>()?
             }
@@ -75,8 +72,12 @@ impl AudioClip {
 
     pub fn write_wav_mono(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create output WAV directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create output WAV directory: {}",
+                    parent.display()
+                )
+            })?;
         }
 
         let spec = hound::WavSpec {
@@ -91,7 +92,9 @@ impl AudioClip {
         for &sample in &self.samples {
             writer
                 .write_sample(sample.clamp(-1.0, 1.0))
-                .with_context(|| format!("failed to write output WAV sample: {}", path.display()))?;
+                .with_context(|| {
+                    format!("failed to write output WAV sample: {}", path.display())
+                })?;
         }
 
         writer
@@ -122,12 +125,8 @@ pub fn frame_signal(
         return Vec::new();
     }
 
-    let frame_size = ((sample_rate_hz as f32) * window_seconds)
-        .round()
-        .max(1.0) as usize;
-    let hop_size = ((sample_rate_hz as f32) * hop_seconds)
-        .round()
-        .max(1.0) as usize;
+    let frame_size = ((sample_rate_hz as f32) * window_seconds).round().max(1.0) as usize;
+    let hop_size = ((sample_rate_hz as f32) * hop_seconds).round().max(1.0) as usize;
 
     if samples.len() <= frame_size {
         return vec![AudioFrame {
@@ -178,13 +177,8 @@ pub fn linear_resample(samples: &[f32], source_rate_hz: u32, target_rate_hz: u32
         let lower_index = position.floor() as usize;
         let upper_index = (lower_index + 1).min(samples.len() - 1);
         let fraction = (position - lower_index as f64) as f32;
-        output.push(lerp(
-            samples[lower_index],
-            samples[upper_index],
-            fraction,
-        ));
+        output.push(lerp(samples[lower_index], samples[upper_index], fraction));
     }
 
     output
 }
-

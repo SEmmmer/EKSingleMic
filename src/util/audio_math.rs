@@ -8,7 +8,8 @@ pub fn rms_linear(samples: &[f32]) -> f32 {
         return 0.0;
     }
 
-    let mean_square = samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
+    let mean_square =
+        samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
     mean_square.sqrt()
 }
 

@@ -28,12 +28,18 @@ impl VadEngine {
     }
 
     pub fn analyze(&self, samples: &[f32], sample_rate_hz: u32) -> Vec<VadFrameDecision> {
-        let frames = frame_signal(samples, sample_rate_hz, FRAME_WINDOW_SECONDS, FRAME_HOP_SECONDS);
+        let frames = frame_signal(
+            samples,
+            sample_rate_hz,
+            FRAME_WINDOW_SECONDS,
+            FRAME_HOP_SECONDS,
+        );
         let mut decisions = Vec::with_capacity(frames.len());
         let mut hangover = 0_usize;
 
         for frame in frames {
-            let rms_dbfs = dbfs_from_linear(rms_linear(&samples[frame.start_sample..frame.end_sample]));
+            let rms_dbfs =
+                dbfs_from_linear(rms_linear(&samples[frame.start_sample..frame.end_sample]));
             let is_active = if rms_dbfs >= self.activity_threshold_dbfs {
                 hangover = self.hangover_frames;
                 true
@@ -54,4 +60,3 @@ impl VadEngine {
         self.activity_threshold_dbfs
     }
 }
-

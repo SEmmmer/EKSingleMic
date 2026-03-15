@@ -1,7 +1,4 @@
-use crate::{
-    pipeline::frames::AudioFrame,
-    util::audio_math::soft_limit,
-};
+use crate::{pipeline::frames::AudioFrame, util::audio_math::soft_limit};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnhancementEngine {
@@ -12,23 +9,25 @@ pub struct EnhancementEngine {
 impl Default for EnhancementEngine {
     fn default() -> Self {
         Self {
-            attack_alpha: 0.6,
-            release_alpha: 0.18,
+            attack_alpha: 0.28,
+            release_alpha: 0.22,
         }
     }
 }
 
 impl EnhancementEngine {
     pub fn smooth_gains(&self, desired_gains: &[f32]) -> Vec<f32> {
+        self.smooth_gains_from(desired_gains, None)
+    }
+
+    pub fn smooth_gains_from(&self, desired_gains: &[f32], initial_gain: Option<f32>) -> Vec<f32> {
         if desired_gains.is_empty() {
             return Vec::new();
         }
 
         let mut smoothed = Vec::with_capacity(desired_gains.len());
-        let mut current = desired_gains[0];
-        smoothed.push(current);
-
-        for &desired in &desired_gains[1..] {
+        let mut current = initial_gain.unwrap_or(desired_gains[0]);
+        for &desired in desired_gains {
             let alpha = if desired < current {
                 self.attack_alpha
             } else {
@@ -66,10 +65,13 @@ impl EnhancementEngine {
             .zip(weights)
             .zip(samples.iter().copied())
             .map(|((weighted, weight), original)| {
-                let gained = if weight > 0.0 { weighted / weight } else { original };
+                let gained = if weight > 0.0 {
+                    weighted / weight
+                } else {
+                    original
+                };
                 soft_limit(gained)
             })
             .collect()
     }
 }
-

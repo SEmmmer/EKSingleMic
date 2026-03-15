@@ -18,14 +18,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     ));
 
     if let Some(error) = &state.last_persist_error {
-        ui.colored_label(egui::Color32::from_rgb(220, 90, 90), format!("最近一次配置写入失败: {error}"));
+        ui.colored_label(
+            egui::Color32::from_rgb(220, 90, 90),
+            format!("最近一次配置写入失败: {error}"),
+        );
     } else {
         ui.label("最近一次配置写入: 正常");
     }
 
     ui.separator();
     ui.heading("离线 Basic Filter 验证");
-    ui.label("当前使用默认 `speaker_profile.json` 对单个 WAV 做离线处理，并把结果输出为新的 WAV 文件。");
+    ui.label(
+        "当前使用默认 `speaker_profile.json` 对单个 WAV 做离线处理，并把结果输出为新的 WAV 文件。",
+    );
 
     let default_profile_ready = state
         .default_profile_summary

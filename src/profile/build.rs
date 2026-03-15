@@ -98,7 +98,11 @@ mod tests {
         record::{EnrollmentScript, RecordedClip, RecordingTakeKind, TrainingRecordingManifest},
     };
 
-    fn dummy_clip(kind: RecordingTakeKind, relative_path: &Path, duration_seconds: f32) -> RecordedClip {
+    fn dummy_clip(
+        kind: RecordingTakeKind,
+        relative_path: &Path,
+        duration_seconds: f32,
+    ) -> RecordedClip {
         let sample_rate_hz = 16_000;
         let sample_count = (sample_rate_hz as f32 * duration_seconds) as usize;
         RecordedClip {
@@ -146,11 +150,7 @@ mod tests {
             &prompt_2_path,
             1.2,
         ));
-        manifest.register(dummy_clip(
-            RecordingTakeKind::FreeSpeech,
-            &free_path,
-            3.0,
-        ));
+        manifest.register(dummy_clip(RecordingTakeKind::FreeSpeech, &free_path, 3.0));
 
         let report = QualityReport {
             expected_prompt_count: 2,
@@ -227,7 +227,12 @@ mod tests {
         writer.finalize().expect("wav should finalize");
     }
 
-    fn write_voiced_wav(path: &Path, sample_rate_hz: u32, frequency_hz: f32, duration_seconds: f32) {
+    fn write_voiced_wav(
+        path: &Path,
+        sample_rate_hz: u32,
+        frequency_hz: f32,
+        duration_seconds: f32,
+    ) {
         let spec = hound::WavSpec {
             channels: 1,
             sample_rate: sample_rate_hz,
