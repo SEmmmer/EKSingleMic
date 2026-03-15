@@ -1055,6 +1055,8 @@ Profile 建议保存为：
 - 记录本轮提交分组决策：按“离线算法升级 / 实时 Basic Filter 与等待反馈 / AGENTS 记忆更新”三组提交
 - 已完成第 1 组提交：离线算法/声纹评分/profile 升级已整理为 Git commit `c7375c3`（`feat: improve offline basic filter scoring`）
 - 已完成第 2 组提交：实时 `Basic Filter` runtime 与启动等待反馈已整理为 Git commit `9a188b7`（`feat: add realtime basic filter startup feedback`）
+- 已完成第 3 组提交：`AGENTS.md` 进度记忆与执行约束更新已整理为 Git commit `910e0b8`（`docs: update AGENTS for M4 progress and workflow constraints`）
+- 已完成本轮远端推送：`c7375c3`、`9a188b7`、`910e0b8` 已于 2026-03-16 推送到 `origin/master`（`git@github.com:SEmmmer/EKSingleMic.git`）
 
 ## 22. 每次提交前检查清单
 
