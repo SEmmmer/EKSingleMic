@@ -661,6 +661,15 @@ Profile 建议保存为：
 - 用户新增启动期防误触要求：启动期弹窗中的“全部覆盖重录”也必须连续点击 3 次后才允许真正触发。
 - 用户当前执行要求：把当前未提交的 M2/M3 相关工作按功能块整理成几个 Git commit，并为每个 commit 写清楚 `commit -m` 信息。
 - 用户当前执行要求：将整理后的全部 commit 统一推送到 `git@github.com:SEmmmer/EKSingleMic.git`。
+- 用户已于 2026-03-16 确认第五轮离线 `refscore` 试听结果“已经可以了”，同意结束 M3 并进入下一步 M4 实时 `Basic Filter`。
+- 用户已于 2026-03-16 完成首轮 M4 真机听检：实时 `Basic Filter` 可稳定启动，无明显延迟，目标说话人能保持住，旁人声音相较 `Passthrough` 有一定压制效果；但“加载旧录音”和“启动 `Basic Filter`”时界面会短暂卡顿，用户新增要求是在这两处提供清晰的进度条/加载提示，降低等待焦虑。
+- 用户已于 2026-03-16 对上一轮等待反馈实现提出修正要求：不接受统一忙碌弹窗；“检测到之前保存的录音”区域必须直接显示进度条；“开始推理/启动实时链路”区域必须改为局部转圈按钮；在这两处交互都达到可用前，不应交还给用户。
+- 用户已于 2026-03-16 进一步确认：当前局部提示仍不够，必须把“加载旧录音”和“启动实时链路”两条路径改成真正的异步后台任务，并提供分阶段进度，而不是只在下一帧延后执行同步重活。
+- 用户已于 2026-03-16 追加真机反馈：点击“启动 Basic Filter”时仍未实际看到局部转圈按钮；当前问题不是没有异步任务，而是启动态在 UI 上没有稳定可见地呈现出来，需保证点击后立即重绘并让局部 loading 至少可见一个短暂但明确的时长。
+- 用户已于 2026-03-16 对启动期“加载文件”路径追加反馈：当前启动期窗口里的抽象分阶段进度仍不够明确；建议改成按音频数量推进的可感知进度，例如 `0/12 -> 12/12`，每实际载入/分析一个音频文件就推进一格，以降低等待焦虑。
+- 用户已于 2026-03-16 对“启动 Basic Filter”路径追加验收要求：局部转圈按钮不能在 realtime runtime 创建成功时就消失；只有当 `CABLE output` 已真正具备输出 `Basic Filter` 音频的能力时，这个局部转圈按钮才允许消失，否则用户会误以为 `CABLE output` 坏了。
+- 用户已于 2026-03-16 新增执行约束：从现在开始 `cargo build` 不再由 Codex 主动执行，构建命令统一由用户手动执行；Codex 只可在回复中说明需要用户自行运行构建。
+- 用户当前执行要求：整理本次新增功能，按功能块拆成几个 Git commit，并直接推送到远端仓库。
 
 ## 17. 当前关键决策（持续更新）
 
@@ -686,6 +695,14 @@ Profile 建议保存为：
 - 启动期若检测到 `profiles/default/recordings` 下已有录音，允许用户直接加载到训练 Review 阶段；加载后按“刚录完”路径立即触发一次质量检查。
 - 启动期弹窗里的“全部覆盖重录”也采用三连击防误触，避免误删旧录音目录。
 - 在实际 WeSpeaker/ECAPA ONNX 模型文件接入前，M2 先用本地确定性启发式 embedding 抽象打通默认 profile 的 embedding 聚合、阈值估计和 UI 展示；后续模型落地后再替换为真实 speaker embedding。
+- “加载旧录音”和“启动实时链路”的等待反馈必须就地展示在用户当前操作区域：前者用启动期窗口内进度条，后者用设备页启动按钮局部转圈；不再使用统一忙碌弹窗。
+- “加载旧录音”和“启动实时链路”两条路径必须使用真实后台任务；UI 只负责显示分阶段进度和应用结果，不能再靠主线程同步执行重活伪装成加载。
+- “启动实时链路”的局部 loading 不仅要存在于代码路径里，还必须在真机上稳定可见；必要时应引入立即重绘和最短可见时长，避免转圈按钮一闪而过或完全不可见。
+- 启动期“加载文件”的进度反馈应优先使用按录音文件数量推进的可感知计数，而不是只显示抽象阶段文案；用户应能直接看到 `x/N` 形式的实际处理进度。
+- “启动 Basic Filter”的局部 loading 结束条件必须从“runtime 创建成功”收紧为“输出链路真正就绪”；至少要等到 `CABLE output` 已实际进入可输出 `Basic Filter` 音频的状态，按钮才可退出 loading。
+- 从现在开始 `cargo build` 由用户手动执行；除非用户后续明确撤回该要求，否则 Codex 不再主动运行任何 `cargo build` 验证命令。
+- 当前工作区的未提交改动需要按“本次新增功能”做功能块整理后提交，不做单一大杂烩 commit；提交完成后直接推送远端。
+- 本轮提交分组策略已确定为 3 组：1）离线算法/声纹评分/profile 升级；2）实时 `Basic Filter` runtime 与启动等待反馈；3）`AGENTS.md` 进度记忆与本轮执行约束更新。
 
 ## 18. 当前里程碑状态（持续更新）
 
@@ -694,18 +711,18 @@ Profile 建议保存为：
 - [x] M0 工程初始化
 - [x] M1 音频设备与直通
 - [x] M2 训练/注册流程
-- [ ] M3 离线推理验证
+- [x] M3 离线推理验证
 - [ ] M4 实时 Basic Filter
 - [ ] M5 Strong Isolation
 - [ ] M6 工程化与稳定性
 
 ### 当前正在进行
-- M3 离线推理验证：已完成离线 WAV 输入输出、启发式 VAD、speaker similarity gating、首版离线 Basic Filter 链路，以及调试页离线处理入口；正在准备真实样本听检/指标记录。
+- M4 实时 Basic Filter：已把“启动 Basic Filter”路径的 loading 结束条件从 runtime 创建成功收紧到输出链路真正就绪；当前等待用户真机复测局部转圈按钮是否能持续到 `CABLE output` 真正可输出 `Basic Filter` 音频。
 
 ### 下一步
-- 增加基于真实离线 WAV 的处理样本、输出导出与主观听检记录
-- 记录相似度分布、门限命中与增益行为，为后续实时 `Basic Filter` 做基线
-- 基于当前调试页入口实际跑通一轮默认 `free_speech.wav` 与额外离线样本，沉淀可复现的验证记录
+- 让用户真机复测“启动 Basic Filter”路径，确认局部转圈按钮是否会持续到 `CABLE output` 真正可输出音频
+- 若这条已达标，再继续观察是否还需要给这段等待增加更明确的“输出链路就绪”文案
+- 若仍未达标，则继续补更强的就绪判定或超时/异常提示
 
 ## 19. 当前已完成内容（持续更新）
 
@@ -832,6 +849,36 @@ Profile 建议保存为：
 - 已为调试页离线入口补充状态测试；本轮改动后 `cargo test` 25/25 通过。
 - 已按功能块把当前 M2/M3 未提交工作整理为多条 Git 提交：分别覆盖训练录音/质检/profile 后端、离线 `Basic Filter` 后端，以及应用层/GUI 接线，便于后续审阅与回退。
 - 已将当前整理后的全部 commit 推送到 `git@github.com:SEmmmer/EKSingleMic.git`，当前本地 `master` 已开始跟踪 `origin/master`。
+- 已于 2026-03-15 重新读取根目录 `AGENTS.md` 并核对当前仓库基线：当前 Git 工作树干净，现正按里程碑顺序复核实际构建/测试状态。
+- 已于 2026-03-15 再次执行实际校验：`cargo test --target-dir target/test-verify` 25/25 通过，`cargo build --target-dir target/build-verify` 通过；当前代码基线与 M2 完成、M3 进行中的文档状态一致。
+- 已于 2026-03-15 核对本地 `profiles/` 目录：当前工作区未包含 `profiles/default/` 及其训练录音、默认 profile、离线输出样本，因此 M3 仍缺少真实样本验证记录，不能提前标记完成。
+- 已于 2026-03-15 基于当前训练页/调试页实际交互整理 M3 样本采集操作说明：先停止 `Passthrough`，再按训练页强引导录制 `ambient_silence.wav`、`fixed_prompt_01.wav`~`fixed_prompt_10.wav`、`free_speech.wav`，随后在调试页运行离线 `Basic Filter` 生成默认输出样本。
+- 用户已于 2026-03-15 完成真实样本采集与首轮离线验证：默认 `speaker_profile.json` 已顺利生成，额外录制了 `target_only.wav`、`crosstalk.wav`、`off_target.wav`，离线运行无报错；主观听感为目标说话人音量忽大忽小、非目标说话人抑制不足，默认离线输出位于 `offline_outputs/`，额外测试样本位于 `profiles/default/test/`。
+- 已于 2026-03-15 确认真实样本与默认 profile 的当前实际落盘位置：文件不在仓库根目录 `profiles/default/`，而是在 `target/release/profiles/default/` 下，说明用户本轮是以 `target/release` 为工作目录运行程序。
+- 已于 2026-03-15 基于真实样本完成第一轮量化分析：当前 profile 的 `suggested_threshold=0.9001`、`dispersion=0.0114`，但离线链路实际使用的 operating threshold 被推高到 `0.98`；训练样本对 centroid 的相似度实际只有 `0.8983~0.9679`，`target_only` 的活动帧平均增益仅约 `0.57`，`crosstalk` 约 `0.46`，`off_target` 约 `0.12`，已确认过高门限是目标说话人音量 pumping 的主要原因之一。
+- 已于 2026-03-15 完成离线 `Basic Filter` 第一轮参数校准：将相似度上下文从 `0.24 s` 调整到 `0.40 s`，把 operating threshold 改为基于 `suggested_threshold + dispersion + 0.04` 且上限收敛到 `0.93`，同时收窄相似度过渡带并放慢增益衰减平滑；本轮新增阈值回归测试后，`cargo test --target-dir target/test-verify` 26/26 通过，`cargo build --target-dir target/build-verify` 通过。
+- 已于 2026-03-15 用同口径启发式脚本重新扫过真实样本分布：本轮校准后，`target_only` 活动帧平均增益预计约 `0.63`，`free_speech` 预计约 `0.61`，高于首轮的约 `0.57` / `0.46`；`off_target` 仍预计维持在约 `0.12` 的低增益区间，后续需由用户重新导出实际 WAV 做第二轮听检确认。
+- 用户已于 2026-03-15 要求由 Codex 直接批量导出第二轮试听文件，并在导出完成后返回这些 WAV 的绝对路径。
+- 已于 2026-03-15 直接基于当前最新离线参数批量导出第二轮试听文件，保留原 `*_filter.wav` 不覆盖；新文件已写入 `target/release/profiles/default/offline_outputs/`，分别为 `target_only_filter_tuned.wav`、`crosstalk_filter_tuned.wav`、`off_target_filter_tuned.wav`、`free_speech_filter_tuned.wav`。
+- 用户已于 2026-03-16 反馈第二轮听感：当前版本差异仍不明显，且 `crosstalk` 中当旁人被压下去时，用户本人声音也会一起被压下去；这进一步确认当前主要缺陷是重叠语音场景下的目标说话人保留不足。
+- 已于 2026-03-16 在离线 `Basic Filter` 中加入目标存在保持/hysteresis：当前会在最近检测到目标说话人后，为后续短时间重叠语音保留一个目标增益下限，避免 `crosstalk` 中目标与串音一起被同步压低；本轮新增状态机测试后，`cargo test --target-dir target/test-verify` 27/27 通过，`cargo build --target-dir target/build-verify` 通过。
+- 已于 2026-03-16 基于目标存在保持版本直接批量导出第三轮试听文件，不覆盖前两轮输出；新文件已写入 `target/release/profiles/default/offline_outputs/`，分别为 `target_only_filter_hold.wav`、`crosstalk_filter_hold.wav`、`off_target_filter_hold.wav`、`free_speech_filter_hold.wav`。
+- 用户已于 2026-03-16 反馈第三轮听感：`hold` 版本里 `crosstalk` 中用户本人声音更稳了，但旁人声音也更容易被放出来；这说明“固定增益下限”的目标保持策略过宽，正在用串音泄漏换目标保留。
+- 已于 2026-03-16 完成目标存在保持第二轮收紧：把 `hold` 期间的固定增益下限改为仅在 `similarity >= exit_threshold` 时生效的动态 floor，按 similarity 在 `MIN_ACTIVE_GAIN` 与保持下限之间插值，避免低分帧在 hold 期间被整体抬高；回归测试与状态机测试后，`cargo test --target-dir target/test-verify` 27/27 通过，`cargo build --target-dir target/build-verify` 通过。
+- 已于 2026-03-16 基于动态 hold floor 版本直接批量导出第四轮试听文件，不覆盖前三轮输出；新文件已写入 `target/release/profiles/default/offline_outputs/`，分别为 `target_only_filter_hold_blend.wav`、`crosstalk_filter_hold_blend.wav`、`off_target_filter_hold_blend.wav`、`free_speech_filter_hold_blend.wav`。
+- 用户已于 2026-03-16 反馈第四轮听感：`hold_blend` 版本里 `crosstalk` 的旁人声音比 `hold` 版更少一些，但用户本人声音没有继续保持住；这确认当前仅靠 hold/hysteresis 调参已经触到启发式 similarity gating 的上限。
+- 已于 2026-03-16 完成离线 speaker score 升级：`src/ml/speaker.rs` 新增基于多条训练参考 embedding 的 support score，`src/pipeline/mod.rs` 现会在 centroid 分数之外引入 reference support 做 blended speaker score，而不是继续只靠单一 centroid 相似度；同时修正了参考 embedding 提取必须使用源录音真实采样率的问题。本轮新增 reference extraction / profile match 回归测试后，`cargo test --target-dir target/test-verify` 29/29 通过，`cargo build --target-dir target/build-verify` 通过。
+- 已于 2026-03-16 直接基于多参考 speaker score 版本批量导出第五轮试听文件，不覆盖前四轮输出；新文件已写入 `target/release/profiles/default/offline_outputs/`，分别为 `target_only_filter_refscore.wav`、`crosstalk_filter_refscore.wav`、`off_target_filter_refscore.wav`、`free_speech_filter_refscore.wav`。
+- 用户已于 2026-03-16 确认第五轮 `refscore` 版本“已经可以了”；M3 所需的离线 WAV 验证、主观听检和结果记录现已闭环，可正式进入 M4 实时 `Basic Filter`。
+- 已于 2026-03-16 完成 M4 首个实时小步：`src/pipeline/realtime.rs` 已从单一 `PassthroughRuntime` 扩展为按 `InferenceMode` 启动的 `RealtimeRuntime`，并新增基于 ring buffer + worker 线程的 `BasicFilterRuntime`；实时 worker 会复用离线 `Basic Filter` 的 profile 预加载、VAD、reference-aware speaker score、目标存在保持与增益平滑逻辑，音频回调线程仍只负责轻量读写 ring buffer。
+- 已于 2026-03-16 完成 M4 当前轮 UI/应用层接线：`src/app/mod.rs` 现在会按推理模式启动对应实时 runtime，设备页/推理页已能显示 `Basic Filter` 运行状态、当前 speaker score、当前增益和最近 chunk 的活动帧统计。本轮 `cargo test --target-dir target/test-verify` 29/29 通过，`cargo build --target-dir target/build-verify` 通过。
+- 用户已于 2026-03-16 完成首轮 M4 真机反馈：当前实时 `Basic Filter` 可稳定启动、无明显延迟，目标说话人能保持住，旁人声音相较 `Passthrough` 更下去；说明首版实时 worker 已具备继续工程化打磨的基础。
+- 已于 2026-03-16 完成首版等待反馈改造：`src/app/state.rs` 新增忙碌状态与延后一帧执行的 deferred command 机制，`src/app/mod.rs` 新增统一忙碌窗口，当前会在“加载旧录音”和“启动实时链路”前先显示进度条/加载提示，再执行实际命令；本轮新增忙碌状态测试后，`cargo test --target-dir target/test-verify` 30/30 通过，`cargo build --target-dir target/build-verify` 通过。
+- 已于 2026-03-16 完成实时启动路径小优化：`src/pipeline/realtime.rs` 里的 `BasicFilterEngine::from_profile()` 已从主线程启动路径移动到 worker 线程内部，减少点击“启动 Basic Filter”后 UI 线程在 profile/reference embedding 初始化上的停顿。
+- 已于 2026-03-16 按用户修正要求完成等待反馈第二轮改造：移除统一忙碌弹窗；`src/app/mod.rs` 现会在“检测到之前保存的录音”窗口内直接显示加载进度条，`src/ui/devices.rs` 现会在设备页把“启动实时链路”按钮切换为局部 `Spinner + disabled button`，`src/app/state.rs` 用 `BusyAction` 区分这两类就地忙碌状态；本轮再次通过 `cargo test --target-dir target/test-verify`（30/30）与 `cargo build --target-dir target/build-verify`。
+- 已于 2026-03-16 完成等待反馈第三轮改造：移除上一轮 `deferred command` 伪异步做法，`src/app/mod.rs` 现通过后台线程 + `mpsc` 事件回传来异步执行“加载旧录音”和“启动实时链路”，并在主线程轮询应用结果；“加载旧录音”现在会按“恢复录音清单 -> 质量检查 -> 刷新默认 profile -> 同步 profile 摘要”阶段推进，“启动实时链路”现在会按“准备实时链路 -> 加载默认 profile -> 打开音频设备并创建实时链路 -> 同步实时状态”阶段推进；`src/ui/devices.rs` 额外在局部转圈按钮下显示阶段文案和进度条，并在忙碌期间禁用设备相关交互。本轮 `cargo fmt`、`cargo test --target-dir target/test-verify`（30/30）和 `cargo build --target-dir target/build-verify` 均已通过。
+- 已于 2026-03-16 完成启动期进度条第四轮改造：`src/profile/quality.rs` 新增可带回调的 `analyze_manifest_with_progress(...)`，`src/profile/record.rs` 新增 `recorded_clip_count()`，`src/app/mod.rs` 现会在“加载文件”后台任务里按已分析录音文件数量持续上报进度，把启动期窗口内进度从抽象阶段文案改为 `正在载入训练音频 x/N`，并在进度条文本中直接显示该计数；默认 profile 刷新与摘要同步仍保持异步阶段，但不再掩盖前半段按录音数量推进的感知进度。本轮 `cargo fmt`、`cargo test --target-dir target/test-verify`（31/31）和 `cargo build --target-dir target/build-verify` 均已通过。
+- 已于 2026-03-16 完成实时启动等待第五轮改造：`src/pipeline/realtime.rs` 新增输出链路就绪所需的运行指标，当前会追踪 `successful_output_frames` 与 `processed_output_chunks`；`src/app/mod.rs` 现会在 realtime runtime 创建成功后继续保持 `StartRealtime` 忙碌状态，直到输出设备已消费到 `Basic Filter` 启动后产生的输出帧，再结束 loading；`src/ui/devices.rs` 现优先以 `StartRealtime` 忙碌状态决定是否显示局部转圈按钮，不再被 `RunningBasicFilter` 状态覆盖。本轮 `cargo fmt`、`cargo test --target-dir target/test-verify`（31/31）通过；由于运行中的 `ek-single-mic.exe` 占用了 `target/build-verify` 输出文件，构建验证改用独立目录 `target/build-verify-2` 并已成功通过。
 
 ## 20. 当前阻塞与待确认事项（持续更新）
 
@@ -844,6 +891,22 @@ Profile 建议保存为：
 - 当前 M3 已完成离线 WAV 输入输出、启发式 VAD、speaker similarity gating、增益平滑和调试页离线入口；下一步是补齐真实样本验证、输出导出与结果记录，再推进实时 `Basic Filter`。
 - 当前 `cargo build` 已恢复可成功完成；现阶段仅剩占位模块导致的 `dead_code` 警告，不构成代码阻塞。
 - 当前首版离线链路新增了一批尚未接入 UI/命令层的 helper，本轮 `cargo build` 仍有 `dead_code` 警告；这些警告不阻塞 M3，但后续接入离线入口时应顺手收敛。
+- 2026-03-15 复核结果显示：当前 `cargo test` 与独立目标目录 `cargo build` 均可稳定通过；现阶段代码阻塞仍主要集中在 M3 尚未沉淀真实样本听检记录，而非构建/测试失败。
+- 2026-03-15 目录复核结果显示：当前本地仓库未保留 `profiles/default/` 训练录音、默认 profile 或离线输出文件，因此真实样本离线验证仍缺输入数据与结果归档，M3 不能按完成处理。
+- 2026-03-15 用户反馈显示：真实样本首轮离线结果已能生成，但当前启发式 `Basic Filter` 存在明显音量 pumping，且对近距离串音的抑制不足；M3 的主要问题已从“缺少真实样本”转为“真实样本效果不达标且当前工作区尚未确认这些样本的实际落盘位置”。
+- 2026-03-15 已确认当前工作区与运行期输出目录不一致：真实样本实际保存在 `target/release/profiles/default/`，后续分析与复现实验需直接针对该目录，且后续应考虑把默认录音/profile 路径从进程工作目录解耦，避免调试与发布目录各自产生一套数据。
+- 2026-03-15 真实样本量化分析显示：当前离线链路对 `off_target` 已有一定抑制，但 `target_only` 与 `crosstalk` 的活动帧分数分布重叠明显；当前优先级应先修正过高 operating threshold 与过快的衰减平滑，缓解目标说话人忽大忽小，再继续评估启发式 speaker score 对近距离串音的上限。
+- 2026-03-15 当前已完成第一轮参数校准，但 `crosstalk` 与 `target_only` 的分数分布仍有明显重叠；若第二轮听检后串音仍明显压不下去，则需继续评估更强的 speaker score / 条件过滤策略，而不是只靠当前启发式 centroid gating。
+- 2026-03-16 第二轮听检反馈显示：仅靠门限/平滑校准仍不足以处理 `crosstalk` 下的目标保留问题；下一步应优先引入目标存在保持/hysteresis，减少目标与串音一起被同步压低的情况。
+- 2026-03-16 第三轮听检反馈显示：目标存在保持/hysteresis 的固定 floor 虽能改善目标说话人的稳定性，但会同步放松 `crosstalk` 中的非目标抑制；当前离线链路已进入“目标保留”和“串音泄漏”之间的精细 tradeoff 阶段。
+- 2026-03-16 第四轮听检反馈显示：把固定 floor 收紧为动态 floor 后，只能换来“串音少一点，但目标又不稳”；继续小调 hold 参数的收益已明显下降，后续应转向更强的 speaker score / 条件过滤策略。
+- 2026-03-16 当前已确认：仅靠启发式 hold/hysteresis 无法同时满足目标保留与串音抑制，必须依赖更强的 speaker score 继续拉开 `target_only` 与 `crosstalk` 的分数分布；若多参考 score 仍不足，则 M3 后续需要尽早转向更强的条件过滤/TSE 路线。
+- 2026-03-16 当前主要阻塞已从离线效果转移到实时架构：现有 `pipeline/realtime.rs` 仍只有 `Passthrough`，M4 需要在不把重型逻辑放进音频回调线程的前提下接入 worker 化的 `Basic Filter`。
+- 2026-03-16 当前实时 `Basic Filter` 仍是首版 worker 实现：内部采用 chunk 级线性重采样与处理，且仍要求输入/输出设备采样率一致；真机上仍需重点观察延迟、chunk 边界抽动和长时间运行稳定性。
+- 2026-03-16 当前等待反馈已升级为真正异步后台任务 + 分阶段进度；下一步风险不再是“主线程同步卡顿”，而是需要用户在 Windows 真机上确认跨线程启动音频设备是否稳定、阶段文案是否清晰、以及是否仍需要取消/超时保护。
+- 2026-03-16 真机新增可见性问题已确认：即使后台任务已异步化，若点击后没有立即请求重绘、且任务完成过快，设备页仍可能完全看不到局部转圈按钮；当前需要补“立即重绘 + 最短可见时长”来保证这段反馈真正被用户看见。
+- 2026-03-16 启动期进度可感知性问题已切到更具体层面：当前已把“加载文件”进度改为按录音文件数量推进的 `x/N`；剩余待确认点是这种文件计数式进度是否已足够明确，以及 profile 刷新尾段是否仍需继续细化。
+- 2026-03-16 当前实时启动等待的剩余关注点已切换为“就绪判定是否足够贴近用户感知”：当前 loading 会保持到输出链路真正 ready，但仍需用户真机确认这是否已经与 OBS / `CABLE output` 的实际可用时刻足够一致。
 - 若 `target/debug/ek-single-mic.exe` 正在运行，默认 `cargo build` 仍可能因 Windows 文件占用失败；本轮已用独立 `target/build-verify` 目录完成等价构建验证，不构成代码阻塞。
 - 后续模型集成时，需要确认实际使用的 ONNX 模型文件、shape 与 license。
 - 若 Windows 真机上音频设备枚举或格式兼容出现问题，应优先保证直通链路可用，再处理模型接入。
@@ -946,6 +1009,52 @@ Profile 建议保存为：
 - 完成本轮验证：`cargo test` 25/25 通过；默认 `cargo build` 因运行中的 `target/debug/ek-single-mic.exe` 被 Windows 占用失败，随后使用 `cargo build --target-dir target/build-verify` 完成独立构建验证
 - 完成当前轮 Git 历史整理：已将 M2/M3 相关改动按功能块拆成多条 commit，并为每条 commit 写清晰的 `commit -m` 信息
 - 完成当前轮远端同步：已新增 `origin -> git@github.com:SEmmmer/EKSingleMic.git` 并成功执行 `git push -u origin master`
+
+### 2026-03-15
+- 重新读取仓库根目录 `AGENTS.md`，按既定约束从当前里程碑状态开始复核
+- 核对当前 Git 工作树：无未提交改动，适合继续做构建/测试与里程碑确认
+- 执行实际基线校验：`cargo test --target-dir target/test-verify` 25/25 通过，`cargo build --target-dir target/build-verify` 通过；确认 M0/M1/M2 已稳定落地，M3 当前处于离线真实样本验证前的可构建状态
+- 核对本地 `profiles/` 目录：当前仓库不含 `profiles/default/` 训练录音、默认 profile 或离线输出样本；确认 M3 尚缺真实样本听检与结果记录，不能跳到 M4
+- 基于当前实现整理 M3 样本采集说明：明确用户需先在训练页生成默认录音与 `speaker_profile.json`，再去调试页运行离线 `Basic Filter`，补齐真实样本与结果文件
+- 记录用户首轮真实样本验证结果：默认 profile 已生成，`target_only.wav` / `crosstalk.wav` / `off_target.wav` 已录制，离线处理无报错；当前主观问题是目标说话人音量忽大忽小、非目标说话人抑制不足，后续需结合真实样本指标继续排查
+- 定位运行期输出目录：已在 `target/release/profiles/default/` 下找到 `speaker_profile.json` 与 `test/*.wav`，确认本轮真实样本不是缺失，而是写入了 `target/release` 工作目录
+- 结合真实样本做第一轮量化诊断：确认当前离线链路把 `suggested_threshold=0.9001` 推到了 `operating_threshold=0.98`，高于多数训练样本相似度；接下来先针对离线 `Basic Filter` 做阈值/平滑校准，解决目标说话人音量 pumping
+- 完成离线 `Basic Filter` 第一轮参数校准：调整相似度上下文、operating threshold 上限、相似度过渡带与增益平滑参数，并新增 operating threshold 回归测试；`cargo test --target-dir target/test-verify` 与 `cargo build --target-dir target/build-verify` 已再次通过
+- 基于真实样本同口径重扫得到第二轮预估：本轮参数校准预计可把 `target_only` / `free_speech` 的平均活动增益从首轮的约 `0.57` / `0.46` 提升到约 `0.63` / `0.61`，而 `off_target` 仍保持低增益；下一步需要用户重新导出实际离线输出并做第二轮听检
+- 记录新增执行要求：由 Codex 直接基于当前离线参数批量导出第二轮试听文件，并返回每个输出 WAV 的绝对路径给用户直接试听
+- 直接导出第二轮试听文件：已在 `target/release/profiles/default/offline_outputs/` 下生成 `*_filter_tuned.wav` 四个新输出，供用户直接听感对比，不覆盖上一轮 `*_filter.wav`
+
+### 2026-03-16
+- 记录第二轮听检反馈：当前 `crosstalk` 中旁人被压下去时，用户本人声音也会一起被压下去；问题已明确收敛到重叠语音场景下的目标保留不足
+- 决定推进新的离线小步：在 `Basic Filter` 中增加目标存在保持/hysteresis，而不是继续只靠单帧 similarity 门控
+- 完成离线目标存在保持/hysteresis 改造：新增目标保持状态机与对应测试，`cargo test --target-dir target/test-verify` 27/27 通过，`cargo build --target-dir target/build-verify` 通过
+- 直接导出第三轮试听文件：已在 `target/release/profiles/default/offline_outputs/` 下生成 `*_filter_hold.wav` 四个新输出，供用户重点对比 `crosstalk` 中目标说话人的保留情况
+- 记录第三轮听检反馈：`hold` 版本里用户本人声音更稳，但 `crosstalk` 中旁人声音也更容易被放出来，说明固定 hold floor 过宽
+- 完成动态 hold floor 收紧：仅在 `similarity >= exit_threshold` 时保留目标下限，并按 similarity 做 floor 插值，避免低分帧在 hold 期间被整体抬升；对应测试与构建验证已再次通过
+- 直接导出第四轮试听文件：已在 `target/release/profiles/default/offline_outputs/` 下生成 `*_filter_hold_blend.wav` 四个新输出，供用户重点对比 `crosstalk` 中目标保留与串音泄漏的 tradeoff
+- 记录第四轮听检反馈：`hold_blend` 版本确实让 `crosstalk` 的旁人声音比 `hold` 版更少，但目标说话人稳定性没有继续保持；决定停止继续小调 hold 参数，下一步切到更强的 speaker score / 条件过滤方向
+- 完成离线 speaker score 升级：把离线 `Basic Filter` 从“当前帧对单一 centroid 打分”改为“centroid + 多条训练参考 embedding 支撑”混合打分，并补上参考 embedding 提取必须使用真实录音采样率的修正；新增相关测试后，`cargo test --target-dir target/test-verify` 29/29 通过，`cargo build --target-dir target/build-verify` 通过
+- 直接导出第五轮试听文件：已在 `target/release/profiles/default/offline_outputs/` 下生成 `*_filter_refscore.wav` 四个新输出，供用户重点对比新 speaker score 对 `target_only` 稳定性和 `crosstalk` 串音抑制的影响
+- 记录第五轮听检结论：用户确认 `refscore` 版本“已经可以了”；M3 离线推理验证达成当前验收标准，下一步切换到 M4 实时 `Basic Filter`
+- 完成 M4 首个实时小步：把实时链路从固定 `Passthrough` 重构为按推理模式启动的 `RealtimeRuntime`，新增 `BasicFilterRuntime` worker 线程，并将设备页/推理页状态展示扩展到 `Basic Filter` 的当前分数、增益和最近 chunk 活动帧统计
+- 完成 M4 当前轮构建验证：`cargo test --target-dir target/test-verify` 29/29 通过，`cargo build --target-dir target/build-verify` 通过；下一步进入 Windows 真机实时听检
+- 记录首轮 M4 真机听检结果：实时 `Basic Filter` 可稳定启动、无明显延迟，目标说话人能保持住，旁人声音较 `Passthrough` 有一定压制；但“加载旧录音”和“启动 `Basic Filter`”时存在短暂卡顿，下一步补进度提示/加载反馈
+- 完成首版等待反馈改造：为“加载旧录音”和“启动实时链路”增加统一的忙碌窗口与进度条，并把这两类命令改成“先展示提示、下一帧再执行”的 deferred command 流程
+- 完成实时启动小优化：把 `BasicFilterEngine` 初始化从主线程搬到 worker 线程，减少点击“启动 Basic Filter”后的主线程阻塞
+- 完成本轮验证：`cargo test --target-dir target/test-verify` 30/30 通过，`cargo build --target-dir target/build-verify` 通过；下一步请用户复测等待期体感
+- 记录用户对等待反馈的修正要求：统一忙碌弹窗方案不合格；下一步改为“检测到之前保存的录音”窗口内进度条，以及“启动实时链路”按钮局部转圈状态，未达可用前不交还用户
+- 完成等待反馈第二轮改造：移除统一忙碌弹窗，把“加载旧录音”改为启动期窗口内局部进度条，把“启动实时链路”改为设备页局部转圈按钮，并再次通过 `cargo test --target-dir target/test-verify`（30/30）与 `cargo build --target-dir target/build-verify`
+- 记录用户新增要求：局部进度提示仍不足，下一步把“加载旧录音”和“启动实时链路”两条路径升级为真正异步后台任务，并提供分阶段进度回报
+- 完成等待反馈第三轮改造：把“加载旧录音”和“启动实时链路”两条路径都改成真正异步后台任务，使用后台线程 + `mpsc` 事件回传分阶段进度；设备页局部 loading 区域新增阶段文案和进度条，忙碌期间设备交互被禁用；`cargo fmt`、`cargo test --target-dir target/test-verify`（30/30）与 `cargo build --target-dir target/build-verify` 均通过
+- 记录用户新增建议：启动期“加载文件”路径应按音频数量推进，用 `0/12 -> 12/12` 形式让用户明确感知实际进度
+- 完成启动期进度条第四轮改造：把“加载文件”路径改为按已分析录音数量推进的 `x/N` 进度，并在进度条文本中直接显示计数；`cargo fmt`、`cargo test --target-dir target/test-verify`（31/31）与 `cargo build --target-dir target/build-verify` 均通过
+- 记录用户新增验收要求：局部转圈按钮必须持续到 `CABLE output` 真正具备输出 `Basic Filter` 音频能力，不能在 runtime 创建成功时就消失
+- 完成实时启动等待第五轮改造：把 loading 结束条件从“runtime 创建成功”收紧到“输出链路真正 ready”，并让设备页在 `StartRealtime` 忙碌期间始终优先显示局部转圈按钮；`cargo fmt`、`cargo test --target-dir target/test-verify`（31/31）通过，等价构建验证改用 `cargo build --target-dir target/build-verify-2`
+- 记录用户新增执行约束：从现在开始不再由 Codex 主动执行 `cargo build`，后续构建统一由用户手动运行
+- 记录用户当前执行要求：整理本次新增功能并按功能块拆分 Git commit，随后直接推送远端
+- 记录本轮提交分组决策：按“离线算法升级 / 实时 Basic Filter 与等待反馈 / AGENTS 记忆更新”三组提交
+- 已完成第 1 组提交：离线算法/声纹评分/profile 升级已整理为 Git commit `c7375c3`（`feat: improve offline basic filter scoring`）
+- 已完成第 2 组提交：实时 `Basic Filter` runtime 与启动等待反馈已整理为 Git commit `9a188b7`（`feat: add realtime basic filter startup feedback`）
 
 ## 22. 每次提交前检查清单
 
